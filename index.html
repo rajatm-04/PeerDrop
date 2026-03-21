@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>P2P File Transfer</title>
+    <style>
+      body { margin: 0; padding: 2rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      h2 { margin-bottom: 1rem; }
+      #status { margin: 1rem 0; font-weight: bold; color: #555; }
+      #drop-zone { border: 2px dashed #aaa; border-radius: 8px; padding: 2rem; text-align: center; margin: 1rem 0; color: #aaa; }
+      #drop-zone.active { border-color: #333; color: #333; }
+      #progress { margin-top: 1rem; display: none; }
+      progress { width: 100%; height: 20px; }
+    </style>
+  </head>
+  <body>
+    <h2>P2P File Transfer</h2>
+    <div id="status">Not connected</div>
+
+    <!-- Sender UI -->
+    <div id="sender-ui">
+      <div id="drop-zone">Drop a file here or click to select
+        <br><br>
+        <input type="file" id="file-input" />
+      </div>
+      <button id="send-btn" disabled>Send File</button>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress">
+      <p id="progress-label">0%</p>
+      <progress id="progress-bar" value="0" max="100"></progress>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const ROOM_ID = 'test-room-123';
+      const socket = io();
+      let pc;
+      let dataChannel;
+
+      // ---- Status helper ----
+      function setStatus(msg) {
+        document.getElementById('status').textContent = msg;
+        console.log('STATUS:', msg);
+      }
+
+      // ---- Join the room immediately ----
+      socket.emit('join-room', ROOM_ID);
+      setStatus('Waiting for other person to join...');
+
+      // ---- When the other person joins, WE create the offer ----
+      socket.on('user-joined', async () => {
+        setStatus('Other person joined! Creating offer...');
+        pc = createPeerConnection();
+
+        // Create the data channel (sender side)
+        dataChannel = pc.createDataChannel('fileTransfer');
+        setupDataChannel(dataChannel);
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', ROOM_ID, { offer });
+        setStatus('Offer sent! Waiting for answer...');
+      });
+
+      // ---- Handle all incoming signals ----
+      socket.on('signal', async (data) => {
+        if (!pc) {
+          pc = createPeerConnection();
+          // Receiver side: listen for data channel
+          pc.ondatachannel = (e) => {
+            dataChannel = e.channel;
+            setupDataChannel(dataChannel);
+          };
+        }
+
+        if (data.offer) {
+          await pc.setRemoteDescription(data.offer);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('signal', ROOM_ID, { answer });
+          setStatus('Answer sent!');
+        }
+
+        if (data.answer) {
+          await pc.setRemoteDescription(data.answer);
+        }
+
+        if (data.ice) {
+          await pc.addIceCandidate(data.ice);
+        }
+      });
+
+      // ---- Create RTCPeerConnection ----
+      function createPeerConnection() {
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.emit('signal', ROOM_ID, { ice: e.candidate });
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          setStatus('Connection state: ' + pc.connectionState);
+          if (pc.connectionState === 'connected') {
+            setStatus('P2P Connected! 🎉 You can now send a file.');
+            document.getElementById('send-btn').disabled = false;
+          }
+        };
+
+        return pc;
+      }
+
+      // ---- Data channel setup (used by both sender and receiver) ----
+      let receivedChunks = [];
+      let receivedBytes = 0;
+      let fileMeta = null;
+
+      function setupDataChannel(channel) {
+        channel.binaryType = 'arraybuffer';
+
+        channel.onopen = () => console.log('Data channel open!');
+
+        channel.onmessage = ({ data }) => {
+          if (typeof data === 'string') {
+            // First message is file metadata
+            fileMeta = JSON.parse(data);
+            receivedChunks = [];
+            receivedBytes = 0;
+            setStatus('Receiving: ' + fileMeta.name);
+            showProgress(true);
+          } else {
+            // Subsequent messages are file chunks
+            receivedChunks.push(data);
+            receivedBytes += data.byteLength;
+
+            const pct = Math.round((receivedBytes / fileMeta.size) * 100);
+            updateProgress(pct);
+
+            if (receivedBytes === fileMeta.size) {
+              // File complete — trigger download
+              const blob = new Blob(receivedChunks);
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = fileMeta.name;
+              a.click();
+              setStatus('File received: ' + fileMeta.name + ' ✅');
+              showProgress(false);
+            }
+          }
+        };
+      }
+
+      // ---- Send file ----
+      document.getElementById('send-btn').addEventListener('click', async () => {
+        const file = document.getElementById('file-input').files[0];
+        if (!file) { alert('Pick a file first!'); return; }
+
+        const CHUNK_SIZE = 16384; // 16KB
+        let offset = 0;
+
+        // Send metadata first
+        dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
+        setStatus('Sending: ' + file.name);
+        showProgress(true);
+
+        while (offset < file.size) {
+          // Backpressure check — pause if buffer is full
+          if (dataChannel.bufferedAmount > 16 * 1024 * 1024) {
+            await new Promise(resolve => {
+              dataChannel.onbufferedamountlow = resolve;
+            });
+          }
+
+          const chunk = file.slice(offset, offset + CHUNK_SIZE);
+          dataChannel.send(await chunk.arrayBuffer());
+          offset += CHUNK_SIZE;
+
+          const pct = Math.round((offset / file.size) * 100);
+          updateProgress(pct);
+        }
+
+        setStatus('File sent! ✅');
+        showProgress(false);
+      });
+
+      // ---- Progress helpers ----
+      function showProgress(show) {
+        document.getElementById('progress').style.display = show ? 'block' : 'none';
+      }
+      function updateProgress(pct) {
+        document.getElementById('progress-bar').value = pct;
+        document.getElementById('progress-label').textContent = pct + '%';
+      }
+    </script>
+  </body>
+</html>
