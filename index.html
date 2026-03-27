@@ -16,8 +16,21 @@
   <body>
     <h2>P2P File Transfer</h2>
     <div id="status">Not connected</div>
+    <div id="path-info" style="font-family: monospace; color: #444; margin-bottom: 0.75rem;">
+      Path: unknown
+    </div>
+    <div id="rate-info" style="font-family: monospace; color: #444; margin-bottom: 1rem;">
+      Throughput: waiting for connection...
+    </div>
+    <pre id="debug-info" style="font-family: monospace; color: #444; background: #f7f7f7; border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; white-space: pre-wrap; margin-bottom: 1rem;">Debug: idle</pre>
+    <div style="margin-bottom: 1rem;">
+      <label>
+        <input type="checkbox" id="direct-only-toggle" />
+        Force direct mode (STUN only)
+      </label>
+      <span id="mode-info" style="margin-left: 0.75rem; font-family: monospace; color: #444;">Mode: STUN + TURN</span>
+    </div>
 
-    <!-- Sender UI -->
     <div id="sender-ui">
       <div id="drop-zone">Drop a file here or click to select
         <br><br>
@@ -26,7 +39,6 @@
       <button id="send-btn" disabled>Send File</button>
     </div>
 
-    <!-- Progress -->
     <div id="progress">
       <p id="progress-label">0%</p>
       <progress id="progress-bar" value="0" max="100"></progress>
@@ -38,23 +50,87 @@
       const socket = io();
       let pc;
       let dataChannel;
+      let pendingCandidates = [];
+      let selectedPathLogged = false;
+      let statsInterval = null;
+      let lastBytesSent = null;
+      let lastBytesReceived = null;
+      let lastStatsTs = null;
+      let localCandidateTypes = new Set();
+      let remoteCandidateTypes = new Set();
+      let iceErrors = [];
+      let turnServers = [];
+      let rtcConfigLoaded = false;
+      const STUN_SERVERS = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.relay.metered.ca:80' }
+      ];
+      const directOnlyToggle = document.getElementById('direct-only-toggle');
 
-      // ---- Status helper ----
       function setStatus(msg) {
         document.getElementById('status').textContent = msg;
         console.log('STATUS:', msg);
       }
+      function setPathInfo(msg) {
+        document.getElementById('path-info').textContent = 'Path: ' + msg;
+        console.log('PATH:', msg);
+      }
+      function setRateInfo(msg) {
+        document.getElementById('rate-info').textContent = 'Throughput: ' + msg;
+      }
+      function setDebugInfo(msg) {
+        document.getElementById('debug-info').textContent = 'Debug: ' + msg;
+      }
+      function getModeLabel() {
+        return directOnlyToggle.checked ? 'Host-only direct (no STUN/TURN)' : 'STUN + TURN (fallback relay)';
+      }
+      function setModeInfo() {
+        document.getElementById('mode-info').textContent = 'Mode: ' + getModeLabel();
+      }
+      function getIceServersForMode() {
+        // For same-machine/local direct tests, host candidates are enough and avoid STUN DNS issues.
+        return directOnlyToggle.checked ? [] : [...STUN_SERVERS, ...turnServers];
+      }
 
-      // ---- Join the room immediately ----
+      async function ensureRtcConfigLoaded() {
+        if (rtcConfigLoaded) return;
+        rtcConfigLoaded = true;
+        try {
+          const res = await fetch('/api/rtc-config', { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const cfg = await res.json();
+          turnServers = Array.isArray(cfg.turnServers) ? cfg.turnServers : [];
+          console.log('RTC config loaded. TURN servers:', turnServers.length);
+        } catch (err) {
+          // Keep STUN-only fallback if config fetch fails.
+          turnServers = [];
+          console.warn('RTC config fetch failed; using STUN-only fallback.', err);
+          setDebugInfo('rtc-config unavailable; TURN disabled for this session');
+        }
+      }
+
+      const savedDirectOnly = localStorage.getItem('forceDirectMode') === '1';
+      directOnlyToggle.checked = savedDirectOnly;
+      setModeInfo();
+      ensureRtcConfigLoaded();
+      directOnlyToggle.addEventListener('change', () => {
+        localStorage.setItem('forceDirectMode', directOnlyToggle.checked ? '1' : '0');
+        setModeInfo();
+        setStatus('Mode changed. Reconnect both tabs to apply.');
+      });
+
+      // ---- Join room ----
       socket.emit('join-room', ROOM_ID);
       setStatus('Waiting for other person to join...');
 
-      // ---- When the other person joins, WE create the offer ----
+      // ---- Tab 1: other person joined, create offer ----
       socket.on('user-joined', async () => {
         setStatus('Other person joined! Creating offer...');
+        await ensureRtcConfigLoaded();
         pc = createPeerConnection();
 
-        // Create the data channel (sender side)
         dataChannel = pc.createDataChannel('fileTransfer');
         setupDataChannel(dataChannel);
 
@@ -64,11 +140,11 @@
         setStatus('Offer sent! Waiting for answer...');
       });
 
-      // ---- Handle all incoming signals ----
+      // ---- Handle all signals ----
       socket.on('signal', async (data) => {
         if (!pc) {
+          await ensureRtcConfigLoaded();
           pc = createPeerConnection();
-          // Receiver side: listen for data channel
           pc.ondatachannel = (e) => {
             dataChannel = e.channel;
             setupDataChannel(dataChannel);
@@ -77,6 +153,8 @@
 
         if (data.offer) {
           await pc.setRemoteDescription(data.offer);
+          for (const c of pendingCandidates) await pc.addIceCandidate(c);
+          pendingCandidates = [];
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           socket.emit('signal', ROOM_ID, { answer });
@@ -85,22 +163,69 @@
 
         if (data.answer) {
           await pc.setRemoteDescription(data.answer);
+          for (const c of pendingCandidates) await pc.addIceCandidate(c);
+          pendingCandidates = [];
         }
 
         if (data.ice) {
-          await pc.addIceCandidate(data.ice);
+          if (data.ice.type) remoteCandidateTypes.add(data.ice.type);
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(data.ice);
+          } else {
+            pendingCandidates.push(data.ice);
+            console.log('Queued ICE candidate');
+          }
         }
       });
 
       // ---- Create RTCPeerConnection ----
       function createPeerConnection() {
+        if (statsInterval) {
+          clearInterval(statsInterval);
+          statsInterval = null;
+        }
+        lastBytesSent = null;
+        lastBytesReceived = null;
+        lastStatsTs = null;
+        localCandidateTypes = new Set();
+        remoteCandidateTypes = new Set();
+        iceErrors = [];
+        selectedPathLogged = false;
+        setRateInfo('waiting for connection...');
+        setDebugInfo('gathering ICE diagnostics...');
+
+        const usingDirectOnly = directOnlyToggle.checked;
         const pc = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+          iceServers: getIceServersForMode(),
+          iceTransportPolicy: 'all' // still allows host/srflx/relay based on configured servers
         });
+        setPathInfo((usingDirectOnly ? 'Direct-only mode' : 'TURN fallback mode') + ' | gathering candidates...');
 
         pc.onicecandidate = (e) => {
           if (e.candidate) {
+            if (e.candidate.type) localCandidateTypes.add(e.candidate.type);
+            console.log('ICE candidate:', e.candidate.type, e.candidate.protocol);
             socket.emit('signal', ROOM_ID, { ice: e.candidate });
+          } else {
+            console.log('ICE gathering complete');
+          }
+        };
+        pc.onicecandidateerror = (e) => {
+          const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'} addr=${e.address || 'n/a'} port=${e.port || 'n/a'}`;
+          iceErrors.push(err);
+          console.warn('ICE candidate error:', err);
+        };
+
+        pc.onicegatheringstatechange = () => {
+          console.log('ICE gathering state:', pc.iceGatheringState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          console.log('ICE connection state:', pc.iceConnectionState);
+          // Read selected ICE pair to see if path is direct (host/srflx) or TURN relay.
+          if ((pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') && !selectedPathLogged) {
+            selectedPathLogged = true;
+            logSelectedCandidatePair(pc);
           }
         };
 
@@ -109,13 +234,138 @@
           if (pc.connectionState === 'connected') {
             setStatus('P2P Connected! 🎉 You can now send a file.');
             document.getElementById('send-btn').disabled = false;
+            startThroughputMonitor(pc);
+          } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+            if (statsInterval) {
+              clearInterval(statsInterval);
+              statsInterval = null;
+            }
+            setRateInfo('stopped (' + pc.connectionState + ')');
+            if (pc.connectionState === 'failed') {
+              dumpFailureDiagnostics(pc);
+            }
           }
         };
 
         return pc;
       }
 
-      // ---- Data channel setup (used by both sender and receiver) ----
+      async function logSelectedCandidatePair(pc) {
+        try {
+          const stats = await pc.getStats();
+          let selectedPair = null;
+          stats.forEach(report => {
+            if (report.type === 'transport' && report.selectedCandidatePairId && !selectedPair) {
+              selectedPair = stats.get(report.selectedCandidatePairId);
+            }
+          });
+          if (!selectedPair) {
+            stats.forEach(report => {
+              if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded' && !selectedPair) {
+                selectedPair = report;
+              }
+            });
+          }
+
+          if (!selectedPair) {
+            setPathInfo('selected pair not found');
+            return;
+          }
+
+          const local = stats.get(selectedPair.localCandidateId);
+          const remote = stats.get(selectedPair.remoteCandidateId);
+          if (!local || !remote) {
+            setPathInfo('pair found but candidate info missing');
+            return;
+          }
+
+          const localType = local.candidateType || 'unknown';
+          const remoteType = remote.candidateType || 'unknown';
+          if (localType) localCandidateTypes.add(localType);
+          if (remoteType) remoteCandidateTypes.add(remoteType);
+          const localProto = local.protocol || 'n/a';
+          const remoteProto = remote.protocol || 'n/a';
+          const relayHint = localType === 'relay' || remoteType === 'relay' ? 'TURN relay' : 'Direct';
+          setPathInfo(`${relayHint} | local=${localType}/${localProto} remote=${remoteType}/${remoteProto}`);
+        } catch (err) {
+          setPathInfo('stats read failed: ' + err.message);
+        }
+      }
+
+      function formatRate(bytesPerSec) {
+        if (!Number.isFinite(bytesPerSec) || bytesPerSec < 0) return 'n/a';
+        if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + ' MB/s';
+        if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+        return bytesPerSec.toFixed(0) + ' B/s';
+      }
+
+      function startThroughputMonitor(pc) {
+        if (statsInterval) clearInterval(statsInterval);
+        statsInterval = setInterval(async () => {
+          if (pc.connectionState !== 'connected') return;
+          try {
+            const stats = await pc.getStats();
+            let bytesSent = 0;
+            let bytesReceived = 0;
+            let timestamp = null;
+
+            stats.forEach((report) => {
+              if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+                if (typeof report.bytesSent === 'number') bytesSent = Math.max(bytesSent, report.bytesSent);
+                if (typeof report.bytesReceived === 'number') bytesReceived = Math.max(bytesReceived, report.bytesReceived);
+                if (typeof report.timestamp === 'number') timestamp = Math.max(timestamp || 0, report.timestamp);
+              }
+            });
+
+            if (timestamp === null) return;
+            if (lastStatsTs !== null && timestamp > lastStatsTs) {
+              const dtSec = (timestamp - lastStatsTs) / 1000;
+              const upRate = (bytesSent - lastBytesSent) / dtSec;
+              const downRate = (bytesReceived - lastBytesReceived) / dtSec;
+              setRateInfo(`up ${formatRate(upRate)} | down ${formatRate(downRate)}`);
+            } else {
+              setRateInfo('measuring...');
+            }
+
+            lastBytesSent = bytesSent;
+            lastBytesReceived = bytesReceived;
+            lastStatsTs = timestamp;
+          } catch (err) {
+            setRateInfo('stats read failed: ' + err.message);
+          }
+        }, 1000);
+      }
+
+      async function dumpFailureDiagnostics(pc) {
+        try {
+          const stats = await pc.getStats();
+          let nominatedPairs = 0;
+          let succeededPairs = 0;
+          let inProgressPairs = 0;
+
+          stats.forEach((report) => {
+            if (report.type === 'candidate-pair') {
+              if (report.nominated) nominatedPairs += 1;
+              if (report.state === 'succeeded') succeededPairs += 1;
+              if (report.state === 'in-progress') inProgressPairs += 1;
+            }
+            if (report.type === 'remote-candidate' && report.candidateType) {
+              remoteCandidateTypes.add(report.candidateType);
+            }
+          });
+
+          const localList = [...localCandidateTypes].join(', ') || 'none';
+          const remoteList = [...remoteCandidateTypes].join(', ') || 'none';
+          const errors = iceErrors.length ? iceErrors.join(' | ') : 'none';
+          const summary = `failed | local=[${localList}] remote=[${remoteList}] pairs{succeeded=${succeededPairs}, inProgress=${inProgressPairs}, nominated=${nominatedPairs}} errors=[${errors}]`;
+          setDebugInfo(summary);
+          console.warn('ICE FAILURE DIAGNOSTICS:', summary);
+        } catch (err) {
+          setDebugInfo('failed to collect diagnostics: ' + err.message);
+        }
+      }
+
+      // ---- Data channel setup ----
       let receivedChunks = [];
       let receivedBytes = 0;
       let fileMeta = null;
@@ -127,22 +377,19 @@
 
         channel.onmessage = ({ data }) => {
           if (typeof data === 'string') {
-            // First message is file metadata
             fileMeta = JSON.parse(data);
             receivedChunks = [];
             receivedBytes = 0;
             setStatus('Receiving: ' + fileMeta.name);
             showProgress(true);
           } else {
-            // Subsequent messages are file chunks
             receivedChunks.push(data);
             receivedBytes += data.byteLength;
 
             const pct = Math.round((receivedBytes / fileMeta.size) * 100);
             updateProgress(pct);
 
-            if (receivedBytes === fileMeta.size) {
-              // File complete — trigger download
+            if (receivedBytes >= fileMeta.size) {
               const blob = new Blob(receivedChunks);
               const a = document.createElement('a');
               a.href = URL.createObjectURL(blob);
@@ -156,37 +403,59 @@
       }
 
       // ---- Send file ----
-      document.getElementById('send-btn').addEventListener('click', async () => {
+      document.getElementById('send-btn').addEventListener('click', () => {
         const file = document.getElementById('file-input').files[0];
         if (!file) { alert('Pick a file first!'); return; }
+        if (!dataChannel || dataChannel.readyState !== 'open') {
+          alert('Data channel is not open yet.');
+          return;
+        }
 
-        const CHUNK_SIZE = 16384; // 16KB
-        let offset = 0;
-
-        // Send metadata first
+        const CHUNK_SIZE = 16384;
         dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
         setStatus('Sending: ' + file.name);
         showProgress(true);
 
+        dataChannel.bufferedAmountLowThreshold = 65536;
+        sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
+          console.error('Send failed:', err);
+          setStatus('Send failed: ' + err.message);
+          showProgress(false);
+        });
+      });
+
+      async function waitForBufferedAmountLow(channel, threshold) {
+        if (channel.bufferedAmount <= threshold) return;
+        await new Promise((resolve) => {
+          const previousHandler = channel.onbufferedamountlow;
+          channel.onbufferedamountlow = () => {
+            channel.onbufferedamountlow = previousHandler || null;
+            resolve();
+          };
+        });
+      }
+
+      async function sendFileWithBackpressure(file, chunkSize) {
+        let offset = 0;
+        const maxBufferedBytes = 1024 * 1024;
+
         while (offset < file.size) {
-          // Backpressure check — pause if buffer is full
-          if (dataChannel.bufferedAmount > 16 * 1024 * 1024) {
-            await new Promise(resolve => {
-              dataChannel.onbufferedamountlow = resolve;
-            });
+          if (dataChannel.readyState !== 'open') {
+            throw new Error('data channel closed during transfer');
           }
 
-          const chunk = file.slice(offset, offset + CHUNK_SIZE);
-          dataChannel.send(await chunk.arrayBuffer());
-          offset += CHUNK_SIZE;
+          await waitForBufferedAmountLow(dataChannel, maxBufferedBytes);
 
-          const pct = Math.round((offset / file.size) * 100);
-          updateProgress(pct);
+          const chunk = file.slice(offset, offset + chunkSize);
+          const buf = await chunk.arrayBuffer();
+          dataChannel.send(buf);
+          offset += buf.byteLength;
+          updateProgress(Math.min(Math.round((offset / file.size) * 100), 100));
         }
 
         setStatus('File sent! ✅');
         showProgress(false);
-      });
+      }
 
       // ---- Progress helpers ----
       function showProgress(show) {
