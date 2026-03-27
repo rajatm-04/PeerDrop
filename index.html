@@ -26,9 +26,9 @@
     <div style="margin-bottom: 1rem;">
       <label>
         <input type="checkbox" id="direct-only-toggle" />
-        Force direct mode (STUN only)
+        Host-only ICE (no STUN — same subnet / fixes some Chrome DNS issues)
       </label>
-      <span id="mode-info" style="margin-left: 0.75rem; font-family: monospace; color: #444;">Mode: STUN + TURN</span>
+      <span id="mode-info" style="margin-left: 0.75rem; font-family: monospace; color: #444;">Mode: same LAN (STUN)</span>
     </div>
 
     <div id="sender-ui">
@@ -59,13 +59,10 @@
       let localCandidateTypes = new Set();
       let remoteCandidateTypes = new Set();
       let iceErrors = [];
-      let turnServers = [];
-      let rtcConfigLoaded = false;
       const STUN_SERVERS = [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun.relay.metered.ca:80' }
+        { urls: 'stun:stun2.l.google.com:19302' }
       ];
       const directOnlyToggle = document.getElementById('direct-only-toggle');
 
@@ -84,37 +81,19 @@
         document.getElementById('debug-info').textContent = 'Debug: ' + msg;
       }
       function getModeLabel() {
-        return directOnlyToggle.checked ? 'Host-only direct (no STUN/TURN)' : 'STUN + TURN (fallback relay)';
+        return directOnlyToggle.checked ? 'Host-only (same LAN, no STUN)' : 'Same LAN (STUN for discovery)';
       }
       function setModeInfo() {
         document.getElementById('mode-info').textContent = 'Mode: ' + getModeLabel();
       }
       function getIceServersForMode() {
-        // For same-machine/local direct tests, host candidates are enough and avoid STUN DNS issues.
-        return directOnlyToggle.checked ? [] : [...STUN_SERVERS, ...turnServers];
-      }
-
-      async function ensureRtcConfigLoaded() {
-        if (rtcConfigLoaded) return;
-        rtcConfigLoaded = true;
-        try {
-          const res = await fetch('/api/rtc-config', { cache: 'no-store' });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const cfg = await res.json();
-          turnServers = Array.isArray(cfg.turnServers) ? cfg.turnServers : [];
-          console.log('RTC config loaded. TURN servers:', turnServers.length);
-        } catch (err) {
-          // Keep STUN-only fallback if config fetch fails.
-          turnServers = [];
-          console.warn('RTC config fetch failed; using STUN-only fallback.', err);
-          setDebugInfo('rtc-config unavailable; TURN disabled for this session');
-        }
+        if (directOnlyToggle.checked) return [];
+        return STUN_SERVERS;
       }
 
       const savedDirectOnly = localStorage.getItem('forceDirectMode') === '1';
       directOnlyToggle.checked = savedDirectOnly;
       setModeInfo();
-      ensureRtcConfigLoaded();
       directOnlyToggle.addEventListener('change', () => {
         localStorage.setItem('forceDirectMode', directOnlyToggle.checked ? '1' : '0');
         setModeInfo();
@@ -128,7 +107,6 @@
       // ---- Tab 1: other person joined, create offer ----
       socket.on('user-joined', async () => {
         setStatus('Other person joined! Creating offer...');
-        await ensureRtcConfigLoaded();
         pc = createPeerConnection();
 
         dataChannel = pc.createDataChannel('fileTransfer');
@@ -143,7 +121,6 @@
       // ---- Handle all signals ----
       socket.on('signal', async (data) => {
         if (!pc) {
-          await ensureRtcConfigLoaded();
           pc = createPeerConnection();
           pc.ondatachannel = (e) => {
             dataChannel = e.channel;
@@ -199,7 +176,7 @@
           iceServers: getIceServersForMode(),
           iceTransportPolicy: 'all' // still allows host/srflx/relay based on configured servers
         });
-        setPathInfo((usingDirectOnly ? 'Direct-only mode' : 'TURN fallback mode') + ' | gathering candidates...');
+        setPathInfo((usingDirectOnly ? 'Host-only ICE' : 'Same LAN (STUN)') + ' | gathering candidates...');
 
         pc.onicecandidate = (e) => {
           if (e.candidate) {
@@ -222,7 +199,7 @@
 
         pc.oniceconnectionstatechange = () => {
           console.log('ICE connection state:', pc.iceConnectionState);
-          // Read selected ICE pair to see if path is direct (host/srflx) or TURN relay.
+          // Read selected ICE pair (host/srflx on same LAN; no TURN in this app).
           if ((pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') && !selectedPathLogged) {
             selectedPathLogged = true;
             logSelectedCandidatePair(pc);
@@ -285,7 +262,7 @@
           if (remoteType) remoteCandidateTypes.add(remoteType);
           const localProto = local.protocol || 'n/a';
           const remoteProto = remote.protocol || 'n/a';
-          const relayHint = localType === 'relay' || remoteType === 'relay' ? 'TURN relay' : 'Direct';
+          const relayHint = localType === 'relay' || remoteType === 'relay' ? 'Relay' : 'Direct';
           setPathInfo(`${relayHint} | local=${localType}/${localProto} remote=${remoteType}/${remoteProto}`);
         } catch (err) {
           setPathInfo('stats read failed: ' + err.message);

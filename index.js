@@ -22,26 +22,6 @@ app.get('/health', (_req, res) => {
   res.status(200).send('ok');
 });
 
-app.get('/api/rtc-config', (_req, res) => {
-  const turnUsername = process.env.TURN_USERNAME || '';
-  const turnCredential = process.env.TURN_CREDENTIAL || '';
-  const turnUrlsRaw = process.env.TURN_URLS || '';
-  const turnUrls = turnUrlsRaw
-    .split(',')
-    .map((u) => u.trim())
-    .filter(Boolean);
-
-  const turnServers =
-    turnUsername && turnCredential && turnUrls.length
-      ? turnUrls.map((urls) => ({ urls, username: turnUsername, credential: turnCredential }))
-      : [];
-
-  res.set('Cache-Control', 'no-store');
-  res.json({
-    turnServers
-  });
-});
-
 io.on('connection', (socket) => {
 
   socket.on('join-room', (roomId) => {
