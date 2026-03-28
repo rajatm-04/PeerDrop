@@ -393,7 +393,7 @@
         setStatus('Sending: ' + file.name);
         showProgress(true);
 
-        dataChannel.bufferedAmountLowThreshold = 65536;
+        dataChannel.bufferedAmountLowThreshold = 44*1024;
         sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
           console.error('Send failed:', err);
           setStatus('Send failed: ' + err.message);
@@ -414,12 +414,13 @@
 
       async function sendFileWithBackpressure(file, chunkSize) {
         let offset = 0;
-        const maxBufferedBytes = 1024 * 1024;
+        const maxBufferedBytes = 350 * 1024;
 
         while (offset < file.size) {
           if (dataChannel.readyState !== 'open') {
             throw new Error('data channel closed during transfer');
           }
+
 
           await waitForBufferedAmountLow(dataChannel, maxBufferedBytes);
 
