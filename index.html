@@ -1,55 +1,151 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <title>P2P File Transfer</title>
-    <style>
-      body { margin: 0; padding: 2rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-      h2 { margin-bottom: 1rem; }
-      #status { margin: 1rem 0; font-weight: bold; color: #555; }
-      #drop-zone { border: 2px dashed #aaa; border-radius: 8px; padding: 2rem; text-align: center; margin: 1rem 0; color: #aaa; }
-      #drop-zone.active { border-color: #333; color: #333; }
-      #progress { margin-top: 1rem; display: none; }
-      progress { width: 100%; height: 20px; }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeerDrop — P2P File Sharing</title>
+    <meta name="description" content="Share files directly between devices with peer-to-peer WebRTC. No cloud, no limits.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <h2>P2P File Transfer</h2>
-    <div id="status">Not connected</div>
-    <div id="path-info" style="font-family: monospace; color: #444; margin-bottom: 0.75rem;">
-      Path: unknown
-    </div>
-    <div id="rate-info" style="font-family: monospace; color: #444; margin-bottom: 1rem;">
-      Throughput: waiting for connection...
-    </div>
-    <pre id="debug-info" style="font-family: monospace; color: #444; background: #f7f7f7; border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; white-space: pre-wrap; margin-bottom: 1rem;">Debug: idle</pre>
-    <div style="margin-bottom: 1rem;">
-      <label>
-        <input type="checkbox" id="direct-only-toggle" />
-        Host-only ICE (no STUN — same subnet / fixes some Chrome DNS issues)
-      </label>
-      <span id="mode-info" style="margin-left: 0.75rem; font-family: monospace; color: #444;">Mode: same LAN (STUN)</span>
-    </div>
+    <div class="app">
+      <!-- ── Header ──────────────────────────────────────────── -->
+      <header class="header">
+        <div class="logo">
+          <span class="logo-icon">⚡</span>
+          <span class="logo-text">PeerDrop</span>
+        </div>
+        <div class="my-device">
+          <span class="my-emoji" id="my-emoji">…</span>
+          <span class="my-name" id="my-name">Connecting…</span>
+          <span class="online-dot"></span>
+        </div>
+      </header>
 
-    <div id="sender-ui">
-      <div id="drop-zone">Drop a file here or click to select
-        <br><br>
-        <input type="file" id="file-input" />
+      <!-- ── Lobby View ──────────────────────────────────────── -->
+      <main id="lobby-view" class="view">
+        <div class="section-header">
+          <h1>Nearby Devices</h1>
+          <p class="subtitle" id="device-count">Looking for devices…</p>
+        </div>
+
+        <div id="devices-grid" class="devices-grid">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <div id="empty-state" class="empty-state" style="display:none">
+          <span class="empty-icon">📡</span>
+          <p class="empty-title">No other devices found</p>
+          <p class="empty-text">Open PeerDrop on another device to start sharing</p>
+        </div>
+
+        <div class="settings-panel glass">
+          <label class="toggle-label">
+            <input type="checkbox" id="direct-only-toggle">
+            <span class="toggle-slider"></span>
+            <span>Host-only ICE (same subnet)</span>
+          </label>
+          <span class="mode-badge" id="mode-info">STUN</span>
+        </div>
+      </main>
+
+      <!-- ── Connected View ──────────────────────────────────── -->
+      <main id="connected-view" class="view view-hidden">
+        <div class="connection-header">
+          <div class="peer-info">
+            <span class="peer-emoji" id="peer-emoji">🐼</span>
+            <div>
+              <h2 id="peer-name">Connected</h2>
+              <span class="connection-badge" id="connection-status">Establishing connection…</span>
+            </div>
+          </div>
+          <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
+        </div>
+
+        <div id="drop-zone" class="drop-zone glass">
+          <span class="drop-icon">📂</span>
+          <p class="drop-text">Drop a file here or click to select</p>
+          <p class="drop-hint">Any file type, any size</p>
+          <input type="file" id="file-input" style="display:none">
+        </div>
+
+        <div id="file-preview" class="file-preview glass" style="display:none">
+          <span class="file-icon">📄</span>
+          <div class="file-details">
+            <p class="file-name" id="selected-file-name"></p>
+            <p class="file-size" id="selected-file-size"></p>
+          </div>
+          <button id="send-btn" class="btn btn-primary">Send</button>
+        </div>
+
+        <div id="progress-section" class="progress-section glass" style="display:none">
+          <div class="progress-header">
+            <span class="progress-label" id="progress-label">Sending…</span>
+            <span class="progress-pct" id="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-bar"></div>
+          </div>
+        </div>
+
+        <details class="diagnostics glass">
+          <summary>Connection Diagnostics</summary>
+          <div class="diag-grid">
+            <div class="diag-item">
+              <span class="diag-label">Path</span>
+              <span class="diag-value" id="path-info">—</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Throughput</span>
+              <span class="diag-value" id="rate-info">—</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Debug</span>
+              <span class="diag-value" id="debug-info">—</span>
+            </div>
+          </div>
+        </details>
+      </main>
+
+      <!-- ── Invite Modal (incoming) ─────────────────────────── -->
+      <div id="invite-modal" class="modal-overlay" style="display:none">
+        <div class="modal glass">
+          <div class="modal-icon" id="invite-emoji">🦊</div>
+          <h3>Incoming Invite</h3>
+          <p id="invite-message">Someone wants to share files with you</p>
+          <div class="modal-actions">
+            <button id="decline-btn" class="btn btn-outline">Decline</button>
+            <button id="accept-btn" class="btn btn-primary">Accept</button>
+          </div>
+        </div>
       </div>
-      <button id="send-btn" disabled>Send File</button>
-    </div>
 
-    <div id="progress">
-      <p id="progress-label">0%</p>
-      <progress id="progress-bar" value="0" max="100"></progress>
+      <!-- ── Waiting Modal (outgoing invite) ─────────────────── -->
+      <div id="waiting-modal" class="modal-overlay" style="display:none">
+        <div class="modal glass">
+          <div class="spinner"></div>
+          <h3>Invite Sent</h3>
+          <p id="waiting-message">Waiting for response…</p>
+          <button id="cancel-invite-btn" class="btn btn-outline">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-      const ROOM_ID = 'test-room-123';
+      // ================================================================
+      // State
+      // ================================================================
       const socket = io();
-      let pc;
-      let dataChannel;
+      let myInfo = { id: null, displayName: '', emoji: '' };
+      let currentRoomId = null;
+      let pendingInviteSenderId = null;   // who invited me
+      let pendingInviteTargetId = null;   // who I invited
+      let pc = null;
+      let dataChannel = null;
       let pendingCandidates = [];
       let selectedPathLogged = false;
       let statsInterval = null;
@@ -59,74 +155,232 @@
       let localCandidateTypes = new Set();
       let remoteCandidateTypes = new Set();
       let iceErrors = [];
+
       const STUN_SERVERS = [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' }
       ];
-      const directOnlyToggle = document.getElementById('direct-only-toggle');
 
-      function setStatus(msg) {
-        document.getElementById('status').textContent = msg;
-        console.log('STATUS:', msg);
+      // ================================================================
+      // DOM references
+      // ================================================================
+      const $  = (id) => document.getElementById(id);
+      const lobbyView       = $('lobby-view');
+      const connectedView   = $('connected-view');
+      const devicesGrid     = $('devices-grid');
+      const emptyState      = $('empty-state');
+      const deviceCount     = $('device-count');
+      const directOnlyToggle = $('direct-only-toggle');
+      const inviteModal     = $('invite-modal');
+      const waitingModal    = $('waiting-modal');
+      const dropZone        = $('drop-zone');
+      const fileInput       = $('file-input');
+      const filePreview     = $('file-preview');
+      const progressSection = $('progress-section');
+
+      // ================================================================
+      // Helpers
+      // ================================================================
+      function setPathInfo(msg)  { $('path-info').textContent = msg; }
+      function setRateInfo(msg)  { $('rate-info').textContent = msg; }
+      function setDebugInfo(msg) { $('debug-info').textContent = msg; }
+
+      function formatSize(bytes) {
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+        if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
+        if (bytes >= 1024)       return (bytes / 1024).toFixed(1) + ' KB';
+        return bytes + ' B';
       }
-      function setPathInfo(msg) {
-        document.getElementById('path-info').textContent = 'Path: ' + msg;
-        console.log('PATH:', msg);
+      function formatRate(bps) {
+        if (!Number.isFinite(bps) || bps < 0) return 'n/a';
+        if (bps >= 1048576) return (bps / 1048576).toFixed(2) + ' MB/s';
+        if (bps >= 1024)    return (bps / 1024).toFixed(1) + ' KB/s';
+        return bps.toFixed(0) + ' B/s';
       }
-      function setRateInfo(msg) {
-        document.getElementById('rate-info').textContent = 'Throughput: ' + msg;
+
+      function showToast(message, type = 'info') {
+        const el = document.createElement('div');
+        el.className = `toast toast-${type}`;
+        el.textContent = message;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 3200);
       }
-      function setDebugInfo(msg) {
-        document.getElementById('debug-info').textContent = 'Debug: ' + msg;
-      }
+
       function getModeLabel() {
-        return directOnlyToggle.checked ? 'Host-only (same LAN, no STUN)' : 'Same LAN (STUN for discovery)';
+        return directOnlyToggle.checked ? 'HOST ONLY' : 'STUN';
       }
       function setModeInfo() {
-        document.getElementById('mode-info').textContent = 'Mode: ' + getModeLabel();
+        $('mode-info').textContent = getModeLabel();
       }
-      function getIceServersForMode() {
-        if (directOnlyToggle.checked) return [];
-        return STUN_SERVERS;
+      function getIceServers() {
+        return directOnlyToggle.checked ? [] : STUN_SERVERS;
       }
 
+      // ================================================================
+      // View switching
+      // ================================================================
+      function showLobby() {
+        lobbyView.classList.remove('view-hidden');
+        connectedView.classList.add('view-hidden');
+      }
+      function showConnected(peer) {
+        lobbyView.classList.add('view-hidden');
+        connectedView.classList.remove('view-hidden');
+        $('peer-emoji').textContent = peer.emoji;
+        $('peer-name').textContent = peer.displayName;
+        $('connection-status').textContent = 'Establishing connection…';
+        // Reset transfer UI
+        filePreview.style.display = 'none';
+        progressSection.style.display = 'none';
+        fileInput.value = '';
+      }
+
+      // ================================================================
+      // Settings persistence
+      // ================================================================
       const savedDirectOnly = localStorage.getItem('forceDirectMode') === '1';
       directOnlyToggle.checked = savedDirectOnly;
       setModeInfo();
       directOnlyToggle.addEventListener('change', () => {
         localStorage.setItem('forceDirectMode', directOnlyToggle.checked ? '1' : '0');
         setModeInfo();
-        setStatus('Mode changed. Reconnect both tabs to apply.');
       });
 
-      // ---- Join room ----
-      socket.emit('join-room', ROOM_ID);
-      setStatus('Waiting for other person to join...');
+      // ================================================================
+      // Socket.io — Registration & device list
+      // ================================================================
+      socket.on('registered', (info) => {
+        myInfo = info;
+        $('my-emoji').textContent = info.emoji;
+        $('my-name').textContent = info.displayName;
+      });
 
-      // ---- Tab 1: other person joined, create offer ----
-      socket.on('user-joined', async () => {
-        setStatus('Other person joined! Creating offer...');
+      socket.on('online-users', (users) => {
+        const others = users.filter(u => u.id !== myInfo.id);
+        renderDevices(others);
+      });
+
+      function renderDevices(devices) {
+        devicesGrid.innerHTML = '';
+        if (devices.length === 0) {
+          emptyState.style.display = 'block';
+          deviceCount.textContent = 'No other devices online';
+          return;
+        }
+        emptyState.style.display = 'none';
+        deviceCount.textContent = `${devices.length} device${devices.length > 1 ? 's' : ''} online`;
+
+        devices.forEach((device, i) => {
+          const card = document.createElement('div');
+          card.className = 'device-card glass';
+          card.style.animationDelay = `${i * 0.06}s`;
+          card.innerHTML = `
+            <span class="device-emoji">${device.emoji}</span>
+            <span class="device-name">${device.displayName}</span>
+          `;
+          card.addEventListener('click', () => sendInvite(device));
+          devicesGrid.appendChild(card);
+        });
+      }
+
+      // ================================================================
+      // Invite flow
+      // ================================================================
+      function sendInvite(device) {
+        pendingInviteTargetId = device.id;
+        socket.emit('send-invite', device.id);
+        // Show waiting modal
+        $('waiting-message').textContent = `Waiting for ${device.displayName} to accept…`;
+        waitingModal.style.display = 'flex';
+      }
+
+      $('cancel-invite-btn').addEventListener('click', () => {
+        if (pendingInviteTargetId) {
+          socket.emit('cancel-invite', pendingInviteTargetId);
+          pendingInviteTargetId = null;
+        }
+        waitingModal.style.display = 'none';
+      });
+
+      // Incoming invite
+      socket.on('receive-invite', ({ senderId, displayName, emoji }) => {
+        pendingInviteSenderId = senderId;
+        $('invite-emoji').textContent = emoji;
+        $('invite-message').textContent = `${displayName} wants to share files with you`;
+        inviteModal.style.display = 'flex';
+      });
+
+      $('accept-btn').addEventListener('click', () => {
+        if (pendingInviteSenderId) {
+          socket.emit('accept-invite', pendingInviteSenderId);
+          pendingInviteSenderId = null;
+        }
+        inviteModal.style.display = 'none';
+      });
+
+      $('decline-btn').addEventListener('click', () => {
+        if (pendingInviteSenderId) {
+          socket.emit('decline-invite', pendingInviteSenderId);
+          pendingInviteSenderId = null;
+        }
+        inviteModal.style.display = 'none';
+      });
+
+      // Invite cancelled by sender
+      socket.on('invite-cancelled', () => {
+        pendingInviteSenderId = null;
+        inviteModal.style.display = 'none';
+        showToast('Invite was cancelled', 'info');
+      });
+
+      // Invite declined by receiver
+      socket.on('invite-declined', ({ displayName }) => {
+        pendingInviteTargetId = null;
+        waitingModal.style.display = 'none';
+        showToast(`${displayName} declined your invite`, 'error');
+      });
+
+      // Invite failed (user went offline)
+      socket.on('invite-failed', (msg) => {
+        pendingInviteTargetId = null;
+        pendingInviteSenderId = null;
+        waitingModal.style.display = 'none';
+        inviteModal.style.display = 'none';
+        showToast(msg, 'error');
+      });
+
+      // ================================================================
+      // Room ready → start WebRTC
+      // ================================================================
+      socket.on('room-ready', async ({ roomId, isInitiator, peer }) => {
+        currentRoomId = roomId;
+        pendingInviteTargetId = null;
+        waitingModal.style.display = 'none';
+        inviteModal.style.display = 'none';
+
+        showConnected(peer);
         pc = createPeerConnection();
 
-        dataChannel = pc.createDataChannel('fileTransfer');
-        setupDataChannel(dataChannel);
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('signal', ROOM_ID, { offer });
-        setStatus('Offer sent! Waiting for answer...');
-      });
-
-      // ---- Handle all signals ----
-      socket.on('signal', async (data) => {
-        if (!pc) {
-          pc = createPeerConnection();
+        if (isInitiator) {
+          dataChannel = pc.createDataChannel('fileTransfer');
+          setupDataChannel(dataChannel);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('signal', currentRoomId, { offer });
+        } else {
           pc.ondatachannel = (e) => {
             dataChannel = e.channel;
             setupDataChannel(dataChannel);
           };
         }
+      });
+
+      // ================================================================
+      // WebRTC signaling
+      // ================================================================
+      socket.on('signal', async (data) => {
+        if (!pc) return;
 
         if (data.offer) {
           await pc.setRemoteDescription(data.offer);
@@ -134,8 +388,7 @@
           pendingCandidates = [];
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          socket.emit('signal', ROOM_ID, { answer });
-          setStatus('Answer sent!');
+          socket.emit('signal', currentRoomId, { answer });
         }
 
         if (data.answer) {
@@ -150,17 +403,47 @@
             await pc.addIceCandidate(data.ice);
           } else {
             pendingCandidates.push(data.ice);
-            console.log('Queued ICE candidate');
           }
         }
       });
 
-      // ---- Create RTCPeerConnection ----
-      function createPeerConnection() {
-        if (statsInterval) {
-          clearInterval(statsInterval);
-          statsInterval = null;
+      // ================================================================
+      // Peer left / disconnect
+      // ================================================================
+      socket.on('peer-left', () => {
+        cleanupConnection();
+        showLobby();
+        showToast('Peer disconnected', 'info');
+      });
+
+      $('disconnect-btn').addEventListener('click', () => {
+        if (currentRoomId) {
+          socket.emit('leave-room', currentRoomId);
         }
+        cleanupConnection();
+        showLobby();
+      });
+
+      function cleanupConnection() {
+        if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+        if (dataChannel) { try { dataChannel.close(); } catch(_) {} dataChannel = null; }
+        if (pc) { try { pc.close(); } catch(_) {} pc = null; }
+        currentRoomId = null;
+        pendingCandidates = [];
+        selectedPathLogged = false;
+        lastBytesSent = null;
+        lastBytesReceived = null;
+        lastStatsTs = null;
+        localCandidateTypes = new Set();
+        remoteCandidateTypes = new Set();
+        iceErrors = [];
+      }
+
+      // ================================================================
+      // RTCPeerConnection
+      // ================================================================
+      function createPeerConnection() {
+        if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
         lastBytesSent = null;
         lastBytesReceived = null;
         lastStatsTs = null;
@@ -168,68 +451,63 @@
         remoteCandidateTypes = new Set();
         iceErrors = [];
         selectedPathLogged = false;
-        setRateInfo('waiting for connection...');
-        setDebugInfo('gathering ICE diagnostics...');
+        setRateInfo('waiting…');
+        setDebugInfo('gathering ICE candidates…');
 
-        const usingDirectOnly = directOnlyToggle.checked;
-        const pc = new RTCPeerConnection({
-          iceServers: getIceServersForMode(),
-          iceTransportPolicy: 'all' // still allows host/srflx/relay based on configured servers
+        const conn = new RTCPeerConnection({
+          iceServers: getIceServers(),
+          iceTransportPolicy: 'all'
         });
-        setPathInfo((usingDirectOnly ? 'Host-only ICE' : 'Same LAN (STUN)') + ' | gathering candidates...');
 
-        pc.onicecandidate = (e) => {
+        setPathInfo(directOnlyToggle.checked ? 'Host-only ICE | gathering…' : 'STUN | gathering…');
+
+        conn.onicecandidate = (e) => {
           if (e.candidate) {
             if (e.candidate.type) localCandidateTypes.add(e.candidate.type);
-            console.log('ICE candidate:', e.candidate.type, e.candidate.protocol);
-            socket.emit('signal', ROOM_ID, { ice: e.candidate });
-          } else {
-            console.log('ICE gathering complete');
+            socket.emit('signal', currentRoomId, { ice: e.candidate });
           }
         };
-        pc.onicecandidateerror = (e) => {
-          const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'} addr=${e.address || 'n/a'} port=${e.port || 'n/a'}`;
+
+        conn.onicecandidateerror = (e) => {
+          const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'}`;
           iceErrors.push(err);
-          console.warn('ICE candidate error:', err);
         };
 
-        pc.onicegatheringstatechange = () => {
-          console.log('ICE gathering state:', pc.iceGatheringState);
-        };
-
-        pc.oniceconnectionstatechange = () => {
-          console.log('ICE connection state:', pc.iceConnectionState);
-          // Read selected ICE pair (host/srflx on same LAN; no TURN in this app).
-          if ((pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') && !selectedPathLogged) {
+        conn.oniceconnectionstatechange = () => {
+          if ((conn.iceConnectionState === 'connected' || conn.iceConnectionState === 'completed') && !selectedPathLogged) {
             selectedPathLogged = true;
-            logSelectedCandidatePair(pc);
+            logSelectedCandidatePair(conn);
           }
         };
 
-        pc.onconnectionstatechange = () => {
-          setStatus('Connection state: ' + pc.connectionState);
-          if (pc.connectionState === 'connected') {
-            setStatus('P2P Connected! 🎉 You can now send a file.');
-            document.getElementById('send-btn').disabled = false;
-            startThroughputMonitor(pc);
-          } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-            if (statsInterval) {
-              clearInterval(statsInterval);
-              statsInterval = null;
-            }
-            setRateInfo('stopped (' + pc.connectionState + ')');
-            if (pc.connectionState === 'failed') {
-              dumpFailureDiagnostics(pc);
-            }
+        conn.onconnectionstatechange = () => {
+          const state = conn.connectionState;
+          if (state === 'connected') {
+            $('connection-status').textContent = 'Connected';
+            showToast('P2P connection established! 🎉', 'success');
+            startThroughputMonitor(conn);
+          } else if (state === 'failed') {
+            $('connection-status').textContent = 'Failed';
+            dumpFailureDiagnostics(conn);
+            showToast('Connection failed — check diagnostics', 'error');
+          } else if (state === 'disconnected' || state === 'closed') {
+            if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+            $('connection-status').textContent = state;
+            setRateInfo('stopped');
+          } else {
+            $('connection-status').textContent = state;
           }
         };
 
-        return pc;
+        return conn;
       }
 
-      async function logSelectedCandidatePair(pc) {
+      // ================================================================
+      // ICE diagnostics (same logic as before)
+      // ================================================================
+      async function logSelectedCandidatePair(conn) {
         try {
-          const stats = await pc.getStats();
+          const stats = await conn.getStats();
           let selectedPair = null;
           stats.forEach(report => {
             if (report.type === 'transport' && report.selectedCandidatePairId && !selectedPair) {
@@ -243,126 +521,95 @@
               }
             });
           }
+          if (!selectedPair) { setPathInfo('selected pair not found'); return; }
 
-          if (!selectedPair) {
-            setPathInfo('selected pair not found');
-            return;
-          }
-
-          const local = stats.get(selectedPair.localCandidateId);
+          const local  = stats.get(selectedPair.localCandidateId);
           const remote = stats.get(selectedPair.remoteCandidateId);
-          if (!local || !remote) {
-            setPathInfo('pair found but candidate info missing');
-            return;
-          }
+          if (!local || !remote) { setPathInfo('pair found, candidate info missing'); return; }
 
-          const localType = local.candidateType || 'unknown';
-          const remoteType = remote.candidateType || 'unknown';
-          if (localType) localCandidateTypes.add(localType);
-          if (remoteType) remoteCandidateTypes.add(remoteType);
-          const localProto = local.protocol || 'n/a';
-          const remoteProto = remote.protocol || 'n/a';
-          const relayHint = localType === 'relay' || remoteType === 'relay' ? 'Relay' : 'Direct';
-          setPathInfo(`${relayHint} | local=${localType}/${localProto} remote=${remoteType}/${remoteProto}`);
+          const lt = local.candidateType || 'unknown';
+          const rt = remote.candidateType || 'unknown';
+          localCandidateTypes.add(lt);
+          remoteCandidateTypes.add(rt);
+          const hint = (lt === 'relay' || rt === 'relay') ? 'Relay' : 'Direct';
+          setPathInfo(`${hint} | local=${lt}/${local.protocol || 'n/a'} remote=${rt}/${remote.protocol || 'n/a'}`);
         } catch (err) {
           setPathInfo('stats read failed: ' + err.message);
         }
       }
 
-      function formatRate(bytesPerSec) {
-        if (!Number.isFinite(bytesPerSec) || bytesPerSec < 0) return 'n/a';
-        if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + ' MB/s';
-        if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
-        return bytesPerSec.toFixed(0) + ' B/s';
-      }
-
-      function startThroughputMonitor(pc) {
+      function startThroughputMonitor(conn) {
         if (statsInterval) clearInterval(statsInterval);
         statsInterval = setInterval(async () => {
-          if (pc.connectionState !== 'connected') return;
+          if (conn.connectionState !== 'connected') return;
           try {
-            const stats = await pc.getStats();
-            let bytesSent = 0;
-            let bytesReceived = 0;
-            let timestamp = null;
-
-            stats.forEach((report) => {
+            const stats = await conn.getStats();
+            let bytesSent = 0, bytesReceived = 0, timestamp = null;
+            stats.forEach(report => {
               if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
                 if (typeof report.bytesSent === 'number') bytesSent = Math.max(bytesSent, report.bytesSent);
                 if (typeof report.bytesReceived === 'number') bytesReceived = Math.max(bytesReceived, report.bytesReceived);
                 if (typeof report.timestamp === 'number') timestamp = Math.max(timestamp || 0, report.timestamp);
               }
             });
-
             if (timestamp === null) return;
             if (lastStatsTs !== null && timestamp > lastStatsTs) {
-              const dtSec = (timestamp - lastStatsTs) / 1000;
-              const upRate = (bytesSent - lastBytesSent) / dtSec;
-              const downRate = (bytesReceived - lastBytesReceived) / dtSec;
-              setRateInfo(`up ${formatRate(upRate)} | down ${formatRate(downRate)}`);
+              const dt = (timestamp - lastStatsTs) / 1000;
+              setRateInfo(`↑ ${formatRate((bytesSent - lastBytesSent) / dt)}  ↓ ${formatRate((bytesReceived - lastBytesReceived) / dt)}`);
             } else {
-              setRateInfo('measuring...');
+              setRateInfo('measuring…');
             }
-
             lastBytesSent = bytesSent;
             lastBytesReceived = bytesReceived;
             lastStatsTs = timestamp;
           } catch (err) {
-            setRateInfo('stats read failed: ' + err.message);
+            setRateInfo('stats error');
           }
         }, 1000);
       }
 
-      async function dumpFailureDiagnostics(pc) {
+      async function dumpFailureDiagnostics(conn) {
         try {
-          const stats = await pc.getStats();
-          let nominatedPairs = 0;
-          let succeededPairs = 0;
-          let inProgressPairs = 0;
-
-          stats.forEach((report) => {
+          const stats = await conn.getStats();
+          let nominated = 0, succeeded = 0, inProgress = 0;
+          stats.forEach(report => {
             if (report.type === 'candidate-pair') {
-              if (report.nominated) nominatedPairs += 1;
-              if (report.state === 'succeeded') succeededPairs += 1;
-              if (report.state === 'in-progress') inProgressPairs += 1;
+              if (report.nominated) nominated++;
+              if (report.state === 'succeeded') succeeded++;
+              if (report.state === 'in-progress') inProgress++;
             }
             if (report.type === 'remote-candidate' && report.candidateType) {
               remoteCandidateTypes.add(report.candidateType);
             }
           });
-
-          const localList = [...localCandidateTypes].join(', ') || 'none';
-          const remoteList = [...remoteCandidateTypes].join(', ') || 'none';
-          const errors = iceErrors.length ? iceErrors.join(' | ') : 'none';
-          const summary = `failed | local=[${localList}] remote=[${remoteList}] pairs{succeeded=${succeededPairs}, inProgress=${inProgressPairs}, nominated=${nominatedPairs}} errors=[${errors}]`;
+          const summary = `FAILED | local=[${[...localCandidateTypes].join(',')||'none'}] remote=[${[...remoteCandidateTypes].join(',')||'none'}] pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ')||'none'}]`;
           setDebugInfo(summary);
-          console.warn('ICE FAILURE DIAGNOSTICS:', summary);
         } catch (err) {
-          setDebugInfo('failed to collect diagnostics: ' + err.message);
+          setDebugInfo('diagnostics error: ' + err.message);
         }
       }
 
-      // ---- Data channel setup ----
+      // ================================================================
+      // Data channel & file transfer
+      // ================================================================
       let receivedChunks = [];
       let receivedBytes = 0;
       let fileMeta = null;
 
       function setupDataChannel(channel) {
         channel.binaryType = 'arraybuffer';
-
-        channel.onopen = () => console.log('Data channel open!');
+        channel.onopen = () => console.log('Data channel open');
 
         channel.onmessage = ({ data }) => {
           if (typeof data === 'string') {
             fileMeta = JSON.parse(data);
             receivedChunks = [];
             receivedBytes = 0;
-            setStatus('Receiving: ' + fileMeta.name);
-            showProgress(true);
+            $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
+            showProgressUI(true);
           } else {
             receivedChunks.push(data);
             receivedBytes += data.byteLength;
-
             const pct = Math.round((receivedBytes / fileMeta.size) * 100);
             updateProgress(pct);
 
@@ -372,41 +619,64 @@
               a.href = URL.createObjectURL(blob);
               a.download = fileMeta.name;
               a.click();
-              setStatus('File received: ' + fileMeta.name + ' ✅');
-              showProgress(false);
+              showToast(`File received: ${fileMeta.name}`, 'success');
+              showProgressUI(false);
+              $('progress-label').textContent = 'Done';
             }
           }
         };
       }
 
-      // ---- Send file ----
-      document.getElementById('send-btn').addEventListener('click', () => {
-        const file = document.getElementById('file-input').files[0];
-        if (!file) { alert('Pick a file first!'); return; }
+      // ================================================================
+      // File selection & sending
+      // ================================================================
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+      dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) {
+          fileInput.files = e.dataTransfer.files;
+          handleFileSelected();
+        }
+      });
+      fileInput.addEventListener('change', handleFileSelected);
+
+      function handleFileSelected() {
+        const file = fileInput.files[0];
+        if (!file) return;
+        $('selected-file-name').textContent = file.name;
+        $('selected-file-size').textContent = formatSize(file.size);
+        filePreview.style.display = 'flex';
+      }
+
+      $('send-btn').addEventListener('click', () => {
+        const file = fileInput.files[0];
+        if (!file) { showToast('Select a file first', 'error'); return; }
         if (!dataChannel || dataChannel.readyState !== 'open') {
-          alert('Data channel is not open yet.');
+          showToast('Connection not ready yet', 'error');
           return;
         }
 
         const CHUNK_SIZE = 16384;
         dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
-        setStatus('Sending: ' + file.name);
-        showProgress(true);
+        $('progress-label').textContent = 'Sending: ' + file.name;
+        showProgressUI(true);
 
-        dataChannel.bufferedAmountLowThreshold = 44*1024;
+        dataChannel.bufferedAmountLowThreshold = 44 * 1024;
         sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
-          console.error('Send failed:', err);
-          setStatus('Send failed: ' + err.message);
-          showProgress(false);
+          showToast('Send failed: ' + err.message, 'error');
+          showProgressUI(false);
         });
       });
 
       async function waitForBufferedAmountLow(channel, threshold) {
         if (channel.bufferedAmount <= threshold) return;
         await new Promise((resolve) => {
-          const previousHandler = channel.onbufferedamountlow;
+          const prev = channel.onbufferedamountlow;
           channel.onbufferedamountlow = () => {
-            channel.onbufferedamountlow = previousHandler || null;
+            channel.onbufferedamountlow = prev || null;
             resolve();
           };
         });
@@ -414,16 +684,13 @@
 
       async function sendFileWithBackpressure(file, chunkSize) {
         let offset = 0;
-        const maxBufferedBytes = 350 * 1024;
+        const maxBuf = 350 * 1024;
 
         while (offset < file.size) {
           if (dataChannel.readyState !== 'open') {
-            throw new Error('data channel closed during transfer');
+            throw new Error('Data channel closed during transfer');
           }
-
-
-          await waitForBufferedAmountLow(dataChannel, maxBufferedBytes);
-
+          await waitForBufferedAmountLow(dataChannel, maxBuf);
           const chunk = file.slice(offset, offset + chunkSize);
           const buf = await chunk.arrayBuffer();
           dataChannel.send(buf);
@@ -431,17 +698,20 @@
           updateProgress(Math.min(Math.round((offset / file.size) * 100), 100));
         }
 
-        setStatus('File sent! ✅');
-        showProgress(false);
+        showToast('File sent! ✅', 'success');
+        showProgressUI(false);
       }
 
-      // ---- Progress helpers ----
-      function showProgress(show) {
-        document.getElementById('progress').style.display = show ? 'block' : 'none';
+      // ================================================================
+      // Progress helpers
+      // ================================================================
+      function showProgressUI(show) {
+        progressSection.style.display = show ? 'block' : 'none';
+        if (show) updateProgress(0);
       }
       function updateProgress(pct) {
-        document.getElementById('progress-bar').value = pct;
-        document.getElementById('progress-label').textContent = pct + '%';
+        $('progress-bar').style.width = pct + '%';
+        $('progress-pct').textContent = pct + '%';
       }
     </script>
   </body>
