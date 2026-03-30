@@ -23,18 +23,18 @@ const ADJECTIVES = [
   'Fast', 'Keen', 'Wild', 'Free', 'Brave', 'Noble'
 ];
 const ANIMALS = [
-  { name: 'Fox',     emoji: '🦊' },
-  { name: 'Panda',   emoji: '🐼' },
-  { name: 'Eagle',   emoji: '🦅' },
-  { name: 'Wolf',    emoji: '🐺' },
-  { name: 'Lion',    emoji: '🦁' },
-  { name: 'Tiger',   emoji: '🐯' },
+  { name: 'Fox', emoji: '🦊' },
+  { name: 'Panda', emoji: '🐼' },
+  { name: 'Eagle', emoji: '🦅' },
+  { name: 'Wolf', emoji: '🐺' },
+  { name: 'Lion', emoji: '🦁' },
+  { name: 'Tiger', emoji: '🐯' },
   { name: 'Dolphin', emoji: '🐬' },
-  { name: 'Owl',     emoji: '🦉' },
+  { name: 'Owl', emoji: '🦉' },
   { name: 'Penguin', emoji: '🐧' },
-  { name: 'Bear',    emoji: '🐻' },
-  { name: 'Koala',   emoji: '🐨' },
-  { name: 'Cat',     emoji: '🐱' },
+  { name: 'Bear', emoji: '🐻' },
+  { name: 'Koala', emoji: '🐨' },
+  { name: 'Cat', emoji: '🐱' },
 ];
 
 function generateDeviceName() {
@@ -133,6 +133,9 @@ io.on('connection', (socket) => {
 
   // ── WebRTC signal relay (unchanged) ─────────────────────────────
   socket.on('signal', (roomId, data) => {
+    const type = data.offer ? 'offer' : data.answer ? 'answer' : 'ice';
+    const room = io.sockets.adapter.rooms.get(roomId);
+    console.log(`[SIGNAL] from=${socket.id} room=${roomId} roomSize=${room?.size || 0} type=${type}`);
     socket.to(roomId).emit('signal', data);
   });
 

@@ -1,718 +1,746 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PeerDrop — P2P File Sharing</title>
-    <meta name="description" content="Share files directly between devices with peer-to-peer WebRTC. No cloud, no limits.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css">
-  </head>
-  <body>
-    <div class="app">
-      <!-- ── Header ──────────────────────────────────────────── -->
-      <header class="header">
-        <div class="logo">
-          <span class="logo-icon">⚡</span>
-          <span class="logo-text">PeerDrop</span>
-        </div>
-        <div class="my-device">
-          <span class="my-emoji" id="my-emoji">…</span>
-          <span class="my-name" id="my-name">Connecting…</span>
-          <span class="online-dot"></span>
-        </div>
-      </header>
 
-      <!-- ── Lobby View ──────────────────────────────────────── -->
-      <main id="lobby-view" class="view">
-        <div class="section-header">
-          <h1>Nearby Devices</h1>
-          <p class="subtitle" id="device-count">Looking for devices…</p>
-        </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PeerDrop — P2P File Sharing</title>
+  <meta name="description"
+    content="Share files directly between devices with peer-to-peer WebRTC. No cloud, no limits.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
 
-        <div id="devices-grid" class="devices-grid">
-          <!-- Rendered dynamically -->
-        </div>
+<body>
+  <div class="app">
+    <!-- ── Header ──────────────────────────────────────────── -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">PeerDrop</span>
+      </div>
+      <div class="my-device">
+        <span class="my-emoji" id="my-emoji">…</span>
+        <span class="my-name" id="my-name">Connecting…</span>
+        <span class="online-dot"></span>
+      </div>
+    </header>
 
-        <div id="empty-state" class="empty-state" style="display:none">
-          <span class="empty-icon">📡</span>
-          <p class="empty-title">No other devices found</p>
-          <p class="empty-text">Open PeerDrop on another device to start sharing</p>
-        </div>
+    <!-- ── Lobby View ──────────────────────────────────────── -->
+    <main id="lobby-view" class="view">
+      <div class="section-header">
+        <h1>Nearby Devices</h1>
+        <p class="subtitle" id="device-count">Looking for devices…</p>
+      </div>
 
-        <div class="settings-panel glass">
-          <label class="toggle-label">
-            <input type="checkbox" id="direct-only-toggle">
-            <span class="toggle-slider"></span>
-            <span>Host-only ICE (same subnet)</span>
-          </label>
-          <span class="mode-badge" id="mode-info">STUN</span>
-        </div>
-      </main>
+      <div id="devices-grid" class="devices-grid">
+        <!-- Rendered dynamically -->
+      </div>
 
-      <!-- ── Connected View ──────────────────────────────────── -->
-      <main id="connected-view" class="view view-hidden">
-        <div class="connection-header">
-          <div class="peer-info">
-            <span class="peer-emoji" id="peer-emoji">🐼</span>
-            <div>
-              <h2 id="peer-name">Connected</h2>
-              <span class="connection-badge" id="connection-status">Establishing connection…</span>
-            </div>
-          </div>
-          <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
-        </div>
+      <div id="empty-state" class="empty-state" style="display:none">
+        <span class="empty-icon">📡</span>
+        <p class="empty-title">No other devices found</p>
+        <p class="empty-text">Open PeerDrop on another device to start sharing</p>
+      </div>
 
-        <div id="drop-zone" class="drop-zone glass">
-          <span class="drop-icon">📂</span>
-          <p class="drop-text">Drop a file here or click to select</p>
-          <p class="drop-hint">Any file type, any size</p>
-          <input type="file" id="file-input" style="display:none">
-        </div>
+      <div class="settings-panel glass">
+        <label class="toggle-label">
+          <input type="checkbox" id="direct-only-toggle">
+          <span class="toggle-slider"></span>
+          <span>Host-only ICE (same subnet)</span>
+        </label>
+        <span class="mode-badge" id="mode-info">STUN</span>
+      </div>
+    </main>
 
-        <div id="file-preview" class="file-preview glass" style="display:none">
-          <span class="file-icon">📄</span>
-          <div class="file-details">
-            <p class="file-name" id="selected-file-name"></p>
-            <p class="file-size" id="selected-file-size"></p>
-          </div>
-          <button id="send-btn" class="btn btn-primary">Send</button>
-        </div>
-
-        <div id="progress-section" class="progress-section glass" style="display:none">
-          <div class="progress-header">
-            <span class="progress-label" id="progress-label">Sending…</span>
-            <span class="progress-pct" id="progress-pct">0%</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-fill" id="progress-bar"></div>
+    <!-- ── Connected View ──────────────────────────────────── -->
+    <main id="connected-view" class="view view-hidden">
+      <div class="connection-header">
+        <div class="peer-info">
+          <span class="peer-emoji" id="peer-emoji">🐼</span>
+          <div>
+            <h2 id="peer-name">Connected</h2>
+            <span class="connection-badge" id="connection-status">Establishing connection…</span>
           </div>
         </div>
+        <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
+      </div>
 
-        <details class="diagnostics glass">
-          <summary>Connection Diagnostics</summary>
-          <div class="diag-grid">
-            <div class="diag-item">
-              <span class="diag-label">Path</span>
-              <span class="diag-value" id="path-info">—</span>
-            </div>
-            <div class="diag-item">
-              <span class="diag-label">Throughput</span>
-              <span class="diag-value" id="rate-info">—</span>
-            </div>
-            <div class="diag-item">
-              <span class="diag-label">Debug</span>
-              <span class="diag-value" id="debug-info">—</span>
-            </div>
-          </div>
-        </details>
-      </main>
+      <div id="drop-zone" class="drop-zone glass">
+        <span class="drop-icon">📂</span>
+        <p class="drop-text">Drop a file here or click to select</p>
+        <p class="drop-hint">Any file type, any size</p>
+        <input type="file" id="file-input" style="display:none">
+      </div>
 
-      <!-- ── Invite Modal (incoming) ─────────────────────────── -->
-      <div id="invite-modal" class="modal-overlay" style="display:none">
-        <div class="modal glass">
-          <div class="modal-icon" id="invite-emoji">🦊</div>
-          <h3>Incoming Invite</h3>
-          <p id="invite-message">Someone wants to share files with you</p>
-          <div class="modal-actions">
-            <button id="decline-btn" class="btn btn-outline">Decline</button>
-            <button id="accept-btn" class="btn btn-primary">Accept</button>
-          </div>
+      <div id="file-preview" class="file-preview glass" style="display:none">
+        <span class="file-icon">📄</span>
+        <div class="file-details">
+          <p class="file-name" id="selected-file-name"></p>
+          <p class="file-size" id="selected-file-size"></p>
+        </div>
+        <button id="send-btn" class="btn btn-primary">Send</button>
+      </div>
+
+      <div id="progress-section" class="progress-section glass" style="display:none">
+        <div class="progress-header">
+          <span class="progress-label" id="progress-label">Sending…</span>
+          <span class="progress-pct" id="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-bar"></div>
         </div>
       </div>
 
-      <!-- ── Waiting Modal (outgoing invite) ─────────────────── -->
-      <div id="waiting-modal" class="modal-overlay" style="display:none">
-        <div class="modal glass">
-          <div class="spinner"></div>
-          <h3>Invite Sent</h3>
-          <p id="waiting-message">Waiting for response…</p>
-          <button id="cancel-invite-btn" class="btn btn-outline">Cancel</button>
+      <details class="diagnostics glass">
+        <summary>Connection Diagnostics</summary>
+        <div class="diag-grid">
+          <div class="diag-item">
+            <span class="diag-label">Path</span>
+            <span class="diag-value" id="path-info">—</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Throughput</span>
+            <span class="diag-value" id="rate-info">—</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Debug</span>
+            <span class="diag-value" id="debug-info">—</span>
+          </div>
+        </div>
+      </details>
+    </main>
+
+    <!-- ── Invite Modal (incoming) ─────────────────────────── -->
+    <div id="invite-modal" class="modal-overlay" style="display:none">
+      <div class="modal glass">
+        <div class="modal-icon" id="invite-emoji">🦊</div>
+        <h3>Incoming Invite</h3>
+        <p id="invite-message">Someone wants to share files with you</p>
+        <div class="modal-actions">
+          <button id="decline-btn" class="btn btn-outline">Decline</button>
+          <button id="accept-btn" class="btn btn-primary">Accept</button>
         </div>
       </div>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-      // ================================================================
-      // State
-      // ================================================================
-      const socket = io();
-      let myInfo = { id: null, displayName: '', emoji: '' };
-      let currentRoomId = null;
-      let pendingInviteSenderId = null;   // who invited me
-      let pendingInviteTargetId = null;   // who I invited
-      let pc = null;
-      let dataChannel = null;
-      let pendingCandidates = [];
-      let selectedPathLogged = false;
-      let statsInterval = null;
-      let lastBytesSent = null;
-      let lastBytesReceived = null;
-      let lastStatsTs = null;
-      let localCandidateTypes = new Set();
-      let remoteCandidateTypes = new Set();
-      let iceErrors = [];
+    <!-- ── Waiting Modal (outgoing invite) ─────────────────── -->
+    <div id="waiting-modal" class="modal-overlay" style="display:none">
+      <div class="modal glass">
+        <div class="spinner"></div>
+        <h3>Invite Sent</h3>
+        <p id="waiting-message">Waiting for response…</p>
+        <button id="cancel-invite-btn" class="btn btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
 
-      const STUN_SERVERS = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ];
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // ================================================================
+    // State
+    // ================================================================
+    const socket = io();
+    let myInfo = { id: null, displayName: '', emoji: '' };
+    let currentRoomId = null;
+    let pendingInviteSenderId = null;   // who invited me
+    let pendingInviteTargetId = null;   // who I invited
+    let inviteTimeout = null;           // auto-cancel timer
+    let pc = null;
+    let dataChannel = null;
+    let pendingCandidates = [];
+    let selectedPathLogged = false;
+    let statsInterval = null;
+    let lastBytesSent = null;
+    let lastBytesReceived = null;
+    let lastStatsTs = null;
+    let localCandidateTypes = new Set();
+    let remoteCandidateTypes = new Set();
+    let iceErrors = [];
 
-      // ================================================================
-      // DOM references
-      // ================================================================
-      const $  = (id) => document.getElementById(id);
-      const lobbyView       = $('lobby-view');
-      const connectedView   = $('connected-view');
-      const devicesGrid     = $('devices-grid');
-      const emptyState      = $('empty-state');
-      const deviceCount     = $('device-count');
-      const directOnlyToggle = $('direct-only-toggle');
-      const inviteModal     = $('invite-modal');
-      const waitingModal    = $('waiting-modal');
-      const dropZone        = $('drop-zone');
-      const fileInput       = $('file-input');
-      const filePreview     = $('file-preview');
-      const progressSection = $('progress-section');
+    const STUN_SERVERS = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ];
 
-      // ================================================================
-      // Helpers
-      // ================================================================
-      function setPathInfo(msg)  { $('path-info').textContent = msg; }
-      function setRateInfo(msg)  { $('rate-info').textContent = msg; }
-      function setDebugInfo(msg) { $('debug-info').textContent = msg; }
+    // ================================================================
+    // DOM references
+    // ================================================================
+    const $ = (id) => document.getElementById(id);
+    const lobbyView = $('lobby-view');
+    const connectedView = $('connected-view');
+    const devicesGrid = $('devices-grid');
+    const emptyState = $('empty-state');
+    const deviceCount = $('device-count');
+    const directOnlyToggle = $('direct-only-toggle');
+    const inviteModal = $('invite-modal');
+    const waitingModal = $('waiting-modal');
+    const dropZone = $('drop-zone');
+    const fileInput = $('file-input');
+    const filePreview = $('file-preview');
+    const progressSection = $('progress-section');
 
-      function formatSize(bytes) {
-        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
-        if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
-        if (bytes >= 1024)       return (bytes / 1024).toFixed(1) + ' KB';
-        return bytes + ' B';
-      }
-      function formatRate(bps) {
-        if (!Number.isFinite(bps) || bps < 0) return 'n/a';
-        if (bps >= 1048576) return (bps / 1048576).toFixed(2) + ' MB/s';
-        if (bps >= 1024)    return (bps / 1024).toFixed(1) + ' KB/s';
-        return bps.toFixed(0) + ' B/s';
-      }
+    // ================================================================
+    // Helpers
+    // ================================================================
+    function setPathInfo(msg) { $('path-info').textContent = msg; }
+    function setRateInfo(msg) { $('rate-info').textContent = msg; }
+    function setDebugInfo(msg) { $('debug-info').textContent = msg; }
 
-      function showToast(message, type = 'info') {
-        const el = document.createElement('div');
-        el.className = `toast toast-${type}`;
-        el.textContent = message;
-        document.body.appendChild(el);
-        setTimeout(() => el.remove(), 3200);
-      }
+    function formatSize(bytes) {
+      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+      if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+      if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return bytes + ' B';
+    }
+    function formatRate(bps) {
+      if (!Number.isFinite(bps) || bps < 0) return 'n/a';
+      if (bps >= 1048576) return (bps / 1048576).toFixed(2) + ' MB/s';
+      if (bps >= 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+      return bps.toFixed(0) + ' B/s';
+    }
 
-      function getModeLabel() {
-        return directOnlyToggle.checked ? 'HOST ONLY' : 'STUN';
-      }
-      function setModeInfo() {
-        $('mode-info').textContent = getModeLabel();
-      }
-      function getIceServers() {
-        return directOnlyToggle.checked ? [] : STUN_SERVERS;
-      }
+    function showToast(message, type = 'info') {
+      const el = document.createElement('div');
+      el.className = `toast toast-${type}`;
+      el.textContent = message;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3200);
+    }
 
-      // ================================================================
-      // View switching
-      // ================================================================
-      function showLobby() {
-        lobbyView.classList.remove('view-hidden');
-        connectedView.classList.add('view-hidden');
-      }
-      function showConnected(peer) {
-        lobbyView.classList.add('view-hidden');
-        connectedView.classList.remove('view-hidden');
-        $('peer-emoji').textContent = peer.emoji;
-        $('peer-name').textContent = peer.displayName;
-        $('connection-status').textContent = 'Establishing connection…';
-        // Reset transfer UI
-        filePreview.style.display = 'none';
-        progressSection.style.display = 'none';
-        fileInput.value = '';
-      }
+    function getModeLabel() {
+      return directOnlyToggle.checked ? 'HOST ONLY' : 'STUN';
+    }
+    function setModeInfo() {
+      $('mode-info').textContent = getModeLabel();
+    }
+    function getIceServers() {
+      return directOnlyToggle.checked ? [] : STUN_SERVERS;
+    }
 
-      // ================================================================
-      // Settings persistence
-      // ================================================================
-      const savedDirectOnly = localStorage.getItem('forceDirectMode') === '1';
-      directOnlyToggle.checked = savedDirectOnly;
+    function clearInviteTimeout() {
+      if (inviteTimeout) { clearTimeout(inviteTimeout); inviteTimeout = null; }
+    }
+
+    // ================================================================
+    // View switching
+    // ================================================================
+    function showLobby() {
+      lobbyView.classList.remove('view-hidden');
+      connectedView.classList.add('view-hidden');
+    }
+    function showConnected(peer) {
+      lobbyView.classList.add('view-hidden');
+      connectedView.classList.remove('view-hidden');
+      $('peer-emoji').textContent = peer.emoji;
+      $('peer-name').textContent = peer.displayName;
+      $('connection-status').textContent = 'Establishing connection…';
+      // Reset transfer UI
+      filePreview.style.display = 'none';
+      progressSection.style.display = 'none';
+      fileInput.value = '';
+    }
+
+    // ================================================================
+    // Settings persistence
+    // ================================================================
+    const savedDirectOnly = localStorage.getItem('forceDirectMode') === '1';
+    directOnlyToggle.checked = savedDirectOnly;
+    setModeInfo();
+    directOnlyToggle.addEventListener('change', () => {
+      localStorage.setItem('forceDirectMode', directOnlyToggle.checked ? '1' : '0');
       setModeInfo();
-      directOnlyToggle.addEventListener('change', () => {
-        localStorage.setItem('forceDirectMode', directOnlyToggle.checked ? '1' : '0');
-        setModeInfo();
-      });
+    });
 
-      // ================================================================
-      // Socket.io — Registration & device list
-      // ================================================================
-      socket.on('registered', (info) => {
-        myInfo = info;
-        $('my-emoji').textContent = info.emoji;
-        $('my-name').textContent = info.displayName;
-      });
+    // ================================================================
+    // Socket.io — Registration & device list
+    // ================================================================
+    socket.on('registered', (info) => {
+      myInfo = info;
+      $('my-emoji').textContent = info.emoji;
+      $('my-name').textContent = info.displayName;
+    });
 
-      socket.on('online-users', (users) => {
-        const others = users.filter(u => u.id !== myInfo.id);
-        renderDevices(others);
-      });
+    socket.on('online-users', (users) => {
+      const others = users.filter(u => u.id !== myInfo.id);
+      renderDevices(others);
+    });
 
-      function renderDevices(devices) {
-        devicesGrid.innerHTML = '';
-        if (devices.length === 0) {
-          emptyState.style.display = 'block';
-          deviceCount.textContent = 'No other devices online';
-          return;
-        }
-        emptyState.style.display = 'none';
-        deviceCount.textContent = `${devices.length} device${devices.length > 1 ? 's' : ''} online`;
+    function renderDevices(devices) {
+      devicesGrid.innerHTML = '';
+      if (devices.length === 0) {
+        emptyState.style.display = 'block';
+        deviceCount.textContent = 'No other devices online';
+        return;
+      }
+      emptyState.style.display = 'none';
+      deviceCount.textContent = `${devices.length} device${devices.length > 1 ? 's' : ''} online`;
 
-        devices.forEach((device, i) => {
-          const card = document.createElement('div');
-          card.className = 'device-card glass';
-          card.style.animationDelay = `${i * 0.06}s`;
-          card.innerHTML = `
+      devices.forEach((device, i) => {
+        const card = document.createElement('div');
+        card.className = 'device-card glass';
+        card.style.animationDelay = `${i * 0.06}s`;
+        card.innerHTML = `
             <span class="device-emoji">${device.emoji}</span>
             <span class="device-name">${device.displayName}</span>
           `;
-          card.addEventListener('click', () => sendInvite(device));
-          devicesGrid.appendChild(card);
-        });
-      }
+        card.addEventListener('click', () => sendInvite(device));
+        devicesGrid.appendChild(card);
+      });
+    }
 
-      // ================================================================
-      // Invite flow
-      // ================================================================
-      function sendInvite(device) {
-        pendingInviteTargetId = device.id;
-        socket.emit('send-invite', device.id);
-        // Show waiting modal
-        $('waiting-message').textContent = `Waiting for ${device.displayName} to accept…`;
-        waitingModal.style.display = 'flex';
-      }
-
-      $('cancel-invite-btn').addEventListener('click', () => {
+    // ================================================================
+    // Invite flow
+    // ================================================================
+    function sendInvite(device) {
+      pendingInviteTargetId = device.id;
+      socket.emit('send-invite', device.id);
+      // Show waiting modal
+      $('waiting-message').textContent = `Waiting for ${device.displayName} to accept…`;
+      waitingModal.style.display = 'flex';
+      // Auto-cancel after 30s if no response (handles stale/dead devices)
+      clearInviteTimeout();
+      inviteTimeout = setTimeout(() => {
         if (pendingInviteTargetId) {
           socket.emit('cancel-invite', pendingInviteTargetId);
           pendingInviteTargetId = null;
+          waitingModal.style.display = 'none';
+          showToast('Invite timed out — device may be offline', 'error');
         }
-        waitingModal.style.display = 'none';
-      });
+      }, 30000);
+    }
 
-      // Incoming invite
-      socket.on('receive-invite', ({ senderId, displayName, emoji }) => {
-        pendingInviteSenderId = senderId;
-        $('invite-emoji').textContent = emoji;
-        $('invite-message').textContent = `${displayName} wants to share files with you`;
-        inviteModal.style.display = 'flex';
-      });
+    $('cancel-invite-btn').addEventListener('click', () => {
+      if (pendingInviteTargetId) {
+        socket.emit('cancel-invite', pendingInviteTargetId);
+        pendingInviteTargetId = null;
+      }
+      waitingModal.style.display = 'none';
+    });
 
-      $('accept-btn').addEventListener('click', () => {
-        if (pendingInviteSenderId) {
-          socket.emit('accept-invite', pendingInviteSenderId);
-          pendingInviteSenderId = null;
-        }
-        inviteModal.style.display = 'none';
-      });
+    // Incoming invite
+    socket.on('receive-invite', ({ senderId, displayName, emoji }) => {
+      pendingInviteSenderId = senderId;
+      $('invite-emoji').textContent = emoji;
+      $('invite-message').textContent = `${displayName} wants to share files with you`;
+      inviteModal.style.display = 'flex';
+    });
 
-      $('decline-btn').addEventListener('click', () => {
-        if (pendingInviteSenderId) {
-          socket.emit('decline-invite', pendingInviteSenderId);
-          pendingInviteSenderId = null;
-        }
-        inviteModal.style.display = 'none';
-      });
-
-      // Invite cancelled by sender
-      socket.on('invite-cancelled', () => {
+    $('accept-btn').addEventListener('click', () => {
+      if (pendingInviteSenderId) {
+        socket.emit('accept-invite', pendingInviteSenderId);
         pendingInviteSenderId = null;
-        inviteModal.style.display = 'none';
-        showToast('Invite was cancelled', 'info');
-      });
+      }
+      inviteModal.style.display = 'none';
+    });
 
-      // Invite declined by receiver
-      socket.on('invite-declined', ({ displayName }) => {
-        pendingInviteTargetId = null;
-        waitingModal.style.display = 'none';
-        showToast(`${displayName} declined your invite`, 'error');
-      });
-
-      // Invite failed (user went offline)
-      socket.on('invite-failed', (msg) => {
-        pendingInviteTargetId = null;
+    $('decline-btn').addEventListener('click', () => {
+      if (pendingInviteSenderId) {
+        socket.emit('decline-invite', pendingInviteSenderId);
         pendingInviteSenderId = null;
-        waitingModal.style.display = 'none';
-        inviteModal.style.display = 'none';
-        showToast(msg, 'error');
-      });
+      }
+      inviteModal.style.display = 'none';
+    });
 
-      // ================================================================
-      // Room ready → start WebRTC
-      // ================================================================
-      socket.on('room-ready', async ({ roomId, isInitiator, peer }) => {
-        currentRoomId = roomId;
-        pendingInviteTargetId = null;
-        waitingModal.style.display = 'none';
-        inviteModal.style.display = 'none';
+    // Invite cancelled by sender
+    socket.on('invite-cancelled', () => {
+      pendingInviteSenderId = null;
+      inviteModal.style.display = 'none';
+      showToast('Invite was cancelled', 'info');
+    });
 
-        showConnected(peer);
-        pc = createPeerConnection();
+    // Invite declined by receiver
+    socket.on('invite-declined', ({ displayName }) => {
+      clearInviteTimeout();
+      pendingInviteTargetId = null;
+      waitingModal.style.display = 'none';
+      showToast(`${displayName} declined your invite`, 'error');
+    });
 
-        if (isInitiator) {
-          dataChannel = pc.createDataChannel('fileTransfer');
+    // Invite failed (user went offline)
+    socket.on('invite-failed', (msg) => {
+      clearInviteTimeout();
+      pendingInviteTargetId = null;
+      pendingInviteSenderId = null;
+      waitingModal.style.display = 'none';
+      inviteModal.style.display = 'none';
+      showToast(msg, 'error');
+    });
+
+    // ================================================================
+    // Room ready → start WebRTC
+    // ================================================================
+    socket.on('room-ready', async ({ roomId, isInitiator, peer }) => {
+      clearInviteTimeout();
+      currentRoomId = roomId;
+      pendingInviteTargetId = null;
+      waitingModal.style.display = 'none';
+      inviteModal.style.display = 'none';
+
+      showConnected(peer);
+      pc = createPeerConnection();
+
+      if (isInitiator) {
+        dataChannel = pc.createDataChannel('fileTransfer');
+        setupDataChannel(dataChannel);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', currentRoomId, { offer });
+      } else {
+        pc.ondatachannel = (e) => {
+          dataChannel = e.channel;
           setupDataChannel(dataChannel);
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('signal', currentRoomId, { offer });
-        } else {
-          pc.ondatachannel = (e) => {
-            dataChannel = e.channel;
-            setupDataChannel(dataChannel);
-          };
-        }
-      });
+        };
+      }
+    });
 
-      // ================================================================
-      // WebRTC signaling
-      // ================================================================
-      socket.on('signal', async (data) => {
-        if (!pc) return;
+    // ================================================================
+    // WebRTC signaling
+    // ================================================================
+    socket.on('signal', async (data) => {
+      if (!pc) {
+        pc = createPeerConnection();
+        pc.ondatachannel = (e) => {
+          dataChannel = e.channel;
+          setupDataChannel(dataChannel);
+        };
+      }
 
-        if (data.offer) {
-          await pc.setRemoteDescription(data.offer);
-          for (const c of pendingCandidates) await pc.addIceCandidate(c);
-          pendingCandidates = [];
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit('signal', currentRoomId, { answer });
-        }
-
-        if (data.answer) {
-          await pc.setRemoteDescription(data.answer);
-          for (const c of pendingCandidates) await pc.addIceCandidate(c);
-          pendingCandidates = [];
-        }
-
-        if (data.ice) {
-          if (data.ice.type) remoteCandidateTypes.add(data.ice.type);
-          if (pc.remoteDescription) {
-            await pc.addIceCandidate(data.ice);
-          } else {
-            pendingCandidates.push(data.ice);
-          }
-        }
-      });
-
-      // ================================================================
-      // Peer left / disconnect
-      // ================================================================
-      socket.on('peer-left', () => {
-        cleanupConnection();
-        showLobby();
-        showToast('Peer disconnected', 'info');
-      });
-
-      $('disconnect-btn').addEventListener('click', () => {
-        if (currentRoomId) {
-          socket.emit('leave-room', currentRoomId);
-        }
-        cleanupConnection();
-        showLobby();
-      });
-
-      function cleanupConnection() {
-        if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
-        if (dataChannel) { try { dataChannel.close(); } catch(_) {} dataChannel = null; }
-        if (pc) { try { pc.close(); } catch(_) {} pc = null; }
-        currentRoomId = null;
+      if (data.offer) {
+        await pc.setRemoteDescription(data.offer);
+        for (const c of pendingCandidates) await pc.addIceCandidate(c);
         pendingCandidates = [];
-        selectedPathLogged = false;
-        lastBytesSent = null;
-        lastBytesReceived = null;
-        lastStatsTs = null;
-        localCandidateTypes = new Set();
-        remoteCandidateTypes = new Set();
-        iceErrors = [];
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', currentRoomId, { answer });
       }
 
-      // ================================================================
-      // RTCPeerConnection
-      // ================================================================
-      function createPeerConnection() {
-        if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
-        lastBytesSent = null;
-        lastBytesReceived = null;
-        lastStatsTs = null;
-        localCandidateTypes = new Set();
-        remoteCandidateTypes = new Set();
-        iceErrors = [];
-        selectedPathLogged = false;
-        setRateInfo('waiting…');
-        setDebugInfo('gathering ICE candidates…');
-
-        const conn = new RTCPeerConnection({
-          iceServers: getIceServers(),
-          iceTransportPolicy: 'all'
-        });
-
-        setPathInfo(directOnlyToggle.checked ? 'Host-only ICE | gathering…' : 'STUN | gathering…');
-
-        conn.onicecandidate = (e) => {
-          if (e.candidate) {
-            if (e.candidate.type) localCandidateTypes.add(e.candidate.type);
-            socket.emit('signal', currentRoomId, { ice: e.candidate });
-          }
-        };
-
-        conn.onicecandidateerror = (e) => {
-          const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'}`;
-          iceErrors.push(err);
-        };
-
-        conn.oniceconnectionstatechange = () => {
-          if ((conn.iceConnectionState === 'connected' || conn.iceConnectionState === 'completed') && !selectedPathLogged) {
-            selectedPathLogged = true;
-            logSelectedCandidatePair(conn);
-          }
-        };
-
-        conn.onconnectionstatechange = () => {
-          const state = conn.connectionState;
-          if (state === 'connected') {
-            $('connection-status').textContent = 'Connected';
-            showToast('P2P connection established! 🎉', 'success');
-            startThroughputMonitor(conn);
-          } else if (state === 'failed') {
-            $('connection-status').textContent = 'Failed';
-            dumpFailureDiagnostics(conn);
-            showToast('Connection failed — check diagnostics', 'error');
-          } else if (state === 'disconnected' || state === 'closed') {
-            if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
-            $('connection-status').textContent = state;
-            setRateInfo('stopped');
-          } else {
-            $('connection-status').textContent = state;
-          }
-        };
-
-        return conn;
+      if (data.answer) {
+        await pc.setRemoteDescription(data.answer);
+        for (const c of pendingCandidates) await pc.addIceCandidate(c);
+        pendingCandidates = [];
       }
 
-      // ================================================================
-      // ICE diagnostics (same logic as before)
-      // ================================================================
-      async function logSelectedCandidatePair(conn) {
-        try {
-          const stats = await conn.getStats();
-          let selectedPair = null;
-          stats.forEach(report => {
-            if (report.type === 'transport' && report.selectedCandidatePairId && !selectedPair) {
-              selectedPair = stats.get(report.selectedCandidatePairId);
-            }
-          });
-          if (!selectedPair) {
-            stats.forEach(report => {
-              if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded' && !selectedPair) {
-                selectedPair = report;
-              }
-            });
-          }
-          if (!selectedPair) { setPathInfo('selected pair not found'); return; }
-
-          const local  = stats.get(selectedPair.localCandidateId);
-          const remote = stats.get(selectedPair.remoteCandidateId);
-          if (!local || !remote) { setPathInfo('pair found, candidate info missing'); return; }
-
-          const lt = local.candidateType || 'unknown';
-          const rt = remote.candidateType || 'unknown';
-          localCandidateTypes.add(lt);
-          remoteCandidateTypes.add(rt);
-          const hint = (lt === 'relay' || rt === 'relay') ? 'Relay' : 'Direct';
-          setPathInfo(`${hint} | local=${lt}/${local.protocol || 'n/a'} remote=${rt}/${remote.protocol || 'n/a'}`);
-        } catch (err) {
-          setPathInfo('stats read failed: ' + err.message);
+      if (data.ice) {
+        if (data.ice.type) remoteCandidateTypes.add(data.ice.type);
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(data.ice);
+        } else {
+          pendingCandidates.push(data.ice);
         }
       }
+    });
 
-      function startThroughputMonitor(conn) {
-        if (statsInterval) clearInterval(statsInterval);
-        statsInterval = setInterval(async () => {
-          if (conn.connectionState !== 'connected') return;
-          try {
-            const stats = await conn.getStats();
-            let bytesSent = 0, bytesReceived = 0, timestamp = null;
-            stats.forEach(report => {
-              if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
-                if (typeof report.bytesSent === 'number') bytesSent = Math.max(bytesSent, report.bytesSent);
-                if (typeof report.bytesReceived === 'number') bytesReceived = Math.max(bytesReceived, report.bytesReceived);
-                if (typeof report.timestamp === 'number') timestamp = Math.max(timestamp || 0, report.timestamp);
-              }
-            });
-            if (timestamp === null) return;
-            if (lastStatsTs !== null && timestamp > lastStatsTs) {
-              const dt = (timestamp - lastStatsTs) / 1000;
-              setRateInfo(`↑ ${formatRate((bytesSent - lastBytesSent) / dt)}  ↓ ${formatRate((bytesReceived - lastBytesReceived) / dt)}`);
-            } else {
-              setRateInfo('measuring…');
-            }
-            lastBytesSent = bytesSent;
-            lastBytesReceived = bytesReceived;
-            lastStatsTs = timestamp;
-          } catch (err) {
-            setRateInfo('stats error');
-          }
-        }, 1000);
+    // ================================================================
+    // Peer left / disconnect
+    // ================================================================
+    socket.on('peer-left', () => {
+      cleanupConnection();
+      showLobby();
+      showToast('Peer disconnected', 'info');
+    });
+
+    $('disconnect-btn').addEventListener('click', () => {
+      if (currentRoomId) {
+        socket.emit('leave-room', currentRoomId);
       }
+      cleanupConnection();
+      showLobby();
+    });
 
-      async function dumpFailureDiagnostics(conn) {
-        try {
-          const stats = await conn.getStats();
-          let nominated = 0, succeeded = 0, inProgress = 0;
-          stats.forEach(report => {
-            if (report.type === 'candidate-pair') {
-              if (report.nominated) nominated++;
-              if (report.state === 'succeeded') succeeded++;
-              if (report.state === 'in-progress') inProgress++;
-            }
-            if (report.type === 'remote-candidate' && report.candidateType) {
-              remoteCandidateTypes.add(report.candidateType);
-            }
-          });
-          const summary = `FAILED | local=[${[...localCandidateTypes].join(',')||'none'}] remote=[${[...remoteCandidateTypes].join(',')||'none'}] pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ')||'none'}]`;
-          setDebugInfo(summary);
-        } catch (err) {
-          setDebugInfo('diagnostics error: ' + err.message);
-        }
-      }
+    function cleanupConnection() {
+      if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+      if (dataChannel) { try { dataChannel.close(); } catch (_) { } dataChannel = null; }
+      if (pc) { try { pc.close(); } catch (_) { } pc = null; }
+      currentRoomId = null;
+      pendingCandidates = [];
+      selectedPathLogged = false;
+      lastBytesSent = null;
+      lastBytesReceived = null;
+      lastStatsTs = null;
+      localCandidateTypes = new Set();
+      remoteCandidateTypes = new Set();
+      iceErrors = [];
+    }
 
-      // ================================================================
-      // Data channel & file transfer
-      // ================================================================
-      let receivedChunks = [];
-      let receivedBytes = 0;
-      let fileMeta = null;
+    // ================================================================
+    // RTCPeerConnection
+    // ================================================================
+    function createPeerConnection() {
+      if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+      lastBytesSent = null;
+      lastBytesReceived = null;
+      lastStatsTs = null;
+      localCandidateTypes = new Set();
+      remoteCandidateTypes = new Set();
+      iceErrors = [];
+      selectedPathLogged = false;
+      setRateInfo('waiting…');
+      setDebugInfo('gathering ICE candidates…');
 
-      function setupDataChannel(channel) {
-        channel.binaryType = 'arraybuffer';
-        channel.onopen = () => console.log('Data channel open');
-
-        channel.onmessage = ({ data }) => {
-          if (typeof data === 'string') {
-            fileMeta = JSON.parse(data);
-            receivedChunks = [];
-            receivedBytes = 0;
-            $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
-            showProgressUI(true);
-          } else {
-            receivedChunks.push(data);
-            receivedBytes += data.byteLength;
-            const pct = Math.round((receivedBytes / fileMeta.size) * 100);
-            updateProgress(pct);
-
-            if (receivedBytes >= fileMeta.size) {
-              const blob = new Blob(receivedChunks);
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              a.download = fileMeta.name;
-              a.click();
-              showToast(`File received: ${fileMeta.name}`, 'success');
-              showProgressUI(false);
-              $('progress-label').textContent = 'Done';
-            }
-          }
-        };
-      }
-
-      // ================================================================
-      // File selection & sending
-      // ================================================================
-      dropZone.addEventListener('click', () => fileInput.click());
-      dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-      dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
-      dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-        if (e.dataTransfer.files.length) {
-          fileInput.files = e.dataTransfer.files;
-          handleFileSelected();
-        }
-      });
-      fileInput.addEventListener('change', handleFileSelected);
-
-      function handleFileSelected() {
-        const file = fileInput.files[0];
-        if (!file) return;
-        $('selected-file-name').textContent = file.name;
-        $('selected-file-size').textContent = formatSize(file.size);
-        filePreview.style.display = 'flex';
-      }
-
-      $('send-btn').addEventListener('click', () => {
-        const file = fileInput.files[0];
-        if (!file) { showToast('Select a file first', 'error'); return; }
-        if (!dataChannel || dataChannel.readyState !== 'open') {
-          showToast('Connection not ready yet', 'error');
-          return;
-        }
-
-        const CHUNK_SIZE = 16384;
-        dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
-        $('progress-label').textContent = 'Sending: ' + file.name;
-        showProgressUI(true);
-
-        dataChannel.bufferedAmountLowThreshold = 44 * 1024;
-        sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
-          showToast('Send failed: ' + err.message, 'error');
-          showProgressUI(false);
-        });
+      const conn = new RTCPeerConnection({
+        iceServers: getIceServers(),
+        iceTransportPolicy: 'all'
       });
 
-      async function waitForBufferedAmountLow(channel, threshold) {
-        if (channel.bufferedAmount <= threshold) return;
-        await new Promise((resolve) => {
-          const prev = channel.onbufferedamountlow;
-          channel.onbufferedamountlow = () => {
-            channel.onbufferedamountlow = prev || null;
-            resolve();
-          };
+      setPathInfo(directOnlyToggle.checked ? 'Host-only ICE | gathering…' : 'STUN | gathering…');
+
+      conn.onicecandidate = (e) => {
+        if (e.candidate) {
+          if (e.candidate.type) localCandidateTypes.add(e.candidate.type);
+          socket.emit('signal', currentRoomId, { ice: e.candidate });
+        }
+      };
+
+      conn.onicecandidateerror = (e) => {
+        const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'}`;
+        iceErrors.push(err);
+      };
+
+      conn.oniceconnectionstatechange = () => {
+        if ((conn.iceConnectionState === 'connected' || conn.iceConnectionState === 'completed') && !selectedPathLogged) {
+          selectedPathLogged = true;
+          logSelectedCandidatePair(conn);
+        }
+      };
+
+      conn.onconnectionstatechange = () => {
+        const state = conn.connectionState;
+        if (state === 'connected') {
+          $('connection-status').textContent = 'Connected';
+          showToast('P2P connection established! 🎉', 'success');
+          startThroughputMonitor(conn);
+        } else if (state === 'failed') {
+          $('connection-status').textContent = 'Failed';
+          dumpFailureDiagnostics(conn);
+          showToast('Connection failed — check diagnostics', 'error');
+        } else if (state === 'disconnected' || state === 'closed') {
+          if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+          $('connection-status').textContent = state;
+          setRateInfo('stopped');
+        } else {
+          $('connection-status').textContent = state;
+        }
+      };
+
+      return conn;
+    }
+
+    // ================================================================
+    // ICE diagnostics (same logic as before)
+    // ================================================================
+    async function logSelectedCandidatePair(conn) {
+      try {
+        const stats = await conn.getStats();
+        let selectedPair = null;
+        stats.forEach(report => {
+          if (report.type === 'transport' && report.selectedCandidatePairId && !selectedPair) {
+            selectedPair = stats.get(report.selectedCandidatePairId);
+          }
         });
+        if (!selectedPair) {
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded' && !selectedPair) {
+              selectedPair = report;
+            }
+          });
+        }
+        if (!selectedPair) { setPathInfo('selected pair not found'); return; }
+
+        const local = stats.get(selectedPair.localCandidateId);
+        const remote = stats.get(selectedPair.remoteCandidateId);
+        if (!local || !remote) { setPathInfo('pair found, candidate info missing'); return; }
+
+        const lt = local.candidateType || 'unknown';
+        const rt = remote.candidateType || 'unknown';
+        localCandidateTypes.add(lt);
+        remoteCandidateTypes.add(rt);
+        const hint = (lt === 'relay' || rt === 'relay') ? 'Relay' : 'Direct';
+        setPathInfo(`${hint} | local=${lt}/${local.protocol || 'n/a'} remote=${rt}/${remote.protocol || 'n/a'}`);
+      } catch (err) {
+        setPathInfo('stats read failed: ' + err.message);
+      }
+    }
+
+    function startThroughputMonitor(conn) {
+      if (statsInterval) clearInterval(statsInterval);
+      statsInterval = setInterval(async () => {
+        if (conn.connectionState !== 'connected') return;
+        try {
+          const stats = await conn.getStats();
+          let bytesSent = 0, bytesReceived = 0, timestamp = null;
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+              if (typeof report.bytesSent === 'number') bytesSent = Math.max(bytesSent, report.bytesSent);
+              if (typeof report.bytesReceived === 'number') bytesReceived = Math.max(bytesReceived, report.bytesReceived);
+              if (typeof report.timestamp === 'number') timestamp = Math.max(timestamp || 0, report.timestamp);
+            }
+          });
+          if (timestamp === null) return;
+          if (lastStatsTs !== null && timestamp > lastStatsTs) {
+            const dt = (timestamp - lastStatsTs) / 1000;
+            setRateInfo(`↑ ${formatRate((bytesSent - lastBytesSent) / dt)}  ↓ ${formatRate((bytesReceived - lastBytesReceived) / dt)}`);
+          } else {
+            setRateInfo('measuring…');
+          }
+          lastBytesSent = bytesSent;
+          lastBytesReceived = bytesReceived;
+          lastStatsTs = timestamp;
+        } catch (err) {
+          setRateInfo('stats error');
+        }
+      }, 1000);
+    }
+
+    async function dumpFailureDiagnostics(conn) {
+      try {
+        const stats = await conn.getStats();
+        let nominated = 0, succeeded = 0, inProgress = 0;
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair') {
+            if (report.nominated) nominated++;
+            if (report.state === 'succeeded') succeeded++;
+            if (report.state === 'in-progress') inProgress++;
+          }
+          if (report.type === 'remote-candidate' && report.candidateType) {
+            remoteCandidateTypes.add(report.candidateType);
+          }
+        });
+        const summary = `FAILED | local=[${[...localCandidateTypes].join(',') || 'none'}] remote=[${[...remoteCandidateTypes].join(',') || 'none'}] pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ') || 'none'}]`;
+        setDebugInfo(summary);
+      } catch (err) {
+        setDebugInfo('diagnostics error: ' + err.message);
+      }
+    }
+
+    // ================================================================
+    // Data channel & file transfer
+    // ================================================================
+    let receivedChunks = [];
+    let receivedBytes = 0;
+    let fileMeta = null;
+
+    function setupDataChannel(channel) {
+      channel.binaryType = 'arraybuffer';
+      channel.onopen = () => console.log('Data channel open');
+
+      channel.onmessage = ({ data }) => {
+        if (typeof data === 'string') {
+          fileMeta = JSON.parse(data);
+          receivedChunks = [];
+          receivedBytes = 0;
+          $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
+          showProgressUI(true);
+        } else {
+          receivedChunks.push(data);
+          receivedBytes += data.byteLength;
+          const pct = Math.round((receivedBytes / fileMeta.size) * 100);
+          updateProgress(pct);
+
+          if (receivedBytes >= fileMeta.size) {
+            const blob = new Blob(receivedChunks);
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = fileMeta.name;
+            a.click();
+            showToast(`File received: ${fileMeta.name}`, 'success');
+            showProgressUI(false);
+            $('progress-label').textContent = 'Done';
+          }
+        }
+      };
+    }
+
+    // ================================================================
+    // File selection & sending
+    // ================================================================
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        handleFileSelected();
+      }
+    });
+    fileInput.addEventListener('change', handleFileSelected);
+
+    function handleFileSelected() {
+      const file = fileInput.files[0];
+      if (!file) return;
+      $('selected-file-name').textContent = file.name;
+      $('selected-file-size').textContent = formatSize(file.size);
+      filePreview.style.display = 'flex';
+    }
+
+    $('send-btn').addEventListener('click', () => {
+      const file = fileInput.files[0];
+      if (!file) { showToast('Select a file first', 'error'); return; }
+      if (!dataChannel || dataChannel.readyState !== 'open') {
+        showToast('Connection not ready yet', 'error');
+        return;
       }
 
-      async function sendFileWithBackpressure(file, chunkSize) {
-        let offset = 0;
-        const maxBuf = 350 * 1024;
+      const CHUNK_SIZE = 16384;
+      dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
+      $('progress-label').textContent = 'Sending: ' + file.name;
+      showProgressUI(true);
 
-        while (offset < file.size) {
-          if (dataChannel.readyState !== 'open') {
-            throw new Error('Data channel closed during transfer');
-          }
-          await waitForBufferedAmountLow(dataChannel, maxBuf);
-          const chunk = file.slice(offset, offset + chunkSize);
-          const buf = await chunk.arrayBuffer();
-          dataChannel.send(buf);
-          offset += buf.byteLength;
-          updateProgress(Math.min(Math.round((offset / file.size) * 100), 100));
-        }
-
-        showToast('File sent! ✅', 'success');
+      dataChannel.bufferedAmountLowThreshold = 44 * 1024;
+      sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
+        showToast('Send failed: ' + err.message, 'error');
         showProgressUI(false);
+      });
+    });
+
+    async function waitForBufferedAmountLow(channel, threshold) {
+      if (channel.bufferedAmount <= threshold) return;
+      await new Promise((resolve) => {
+        const prev = channel.onbufferedamountlow;
+        channel.onbufferedamountlow = () => {
+          channel.onbufferedamountlow = prev || null;
+          resolve();
+        };
+      });
+    }
+
+    async function sendFileWithBackpressure(file, chunkSize) {
+      let offset = 0;
+      const maxBuf = 350 * 1024;
+
+      while (offset < file.size) {
+        if (dataChannel.readyState !== 'open') {
+          throw new Error('Data channel closed during transfer');
+        }
+        await waitForBufferedAmountLow(dataChannel, maxBuf);
+        const chunk = file.slice(offset, offset + chunkSize);
+        const buf = await chunk.arrayBuffer();
+        dataChannel.send(buf);
+        offset += buf.byteLength;
+        updateProgress(Math.min(Math.round((offset / file.size) * 100), 100));
       }
 
-      // ================================================================
-      // Progress helpers
-      // ================================================================
-      function showProgressUI(show) {
-        progressSection.style.display = show ? 'block' : 'none';
-        if (show) updateProgress(0);
-      }
-      function updateProgress(pct) {
-        $('progress-bar').style.width = pct + '%';
-        $('progress-pct').textContent = pct + '%';
-      }
-    </script>
-  </body>
+      showToast('File sent! ✅', 'success');
+      showProgressUI(false);
+    }
+
+    // ================================================================
+    // Progress helpers
+    // ================================================================
+    function showProgressUI(show) {
+      progressSection.style.display = show ? 'block' : 'none';
+      if (show) updateProgress(0);
+    }
+    function updateProgress(pct) {
+      $('progress-bar').style.width = pct + '%';
+      $('progress-pct').textContent = pct + '%';
+    }
+  </script>
+</body>
+
 </html>
