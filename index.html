@@ -21,10 +21,19 @@
         <span class="logo-icon">⚡</span>
         <span class="logo-text">PeerDrop</span>
       </div>
-      <div class="my-device">
-        <span class="my-emoji" id="my-emoji">…</span>
-        <span class="my-name" id="my-name">Connecting…</span>
-        <span class="online-dot"></span>
+      <div class="header-right">
+        <button id="history-btn" class="btn-icon" title="Transfer History">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+        </button>
+        <div class="my-device">
+          <span class="my-emoji" id="my-emoji">…</span>
+          <span class="my-name" id="my-name">Connecting…</span>
+          <span class="online-dot"></span>
+        </div>
       </div>
     </header>
 
@@ -92,6 +101,10 @@
         <div class="progress-track">
           <div class="progress-fill" id="progress-bar"></div>
         </div>
+        <div class="progress-actions">
+          <button id="pause-btn" class="btn btn-pause">⏸ Pause</button>
+          <button id="cancel-btn" class="btn btn-cancel">✕ Cancel</button>
+        </div>
       </div>
 
       <details class="diagnostics glass">
@@ -137,6 +150,25 @@
     </div>
   </div>
 
+  <!-- ── History Drawer ──────────────────────────────────────── -->
+  <div id="history-overlay" class="history-overlay" style="display:none">
+    <aside id="history-drawer" class="history-drawer">
+      <div class="history-header">
+        <h3>📋 Transfer History</h3>
+        <div class="history-actions">
+          <button id="clear-history-btn" class="btn btn-outline btn-sm">Clear All</button>
+          <button id="close-history-btn" class="history-close-btn">&times;</button>
+        </div>
+      </div>
+      <div id="history-list" class="history-list"></div>
+      <div id="history-empty" class="history-empty">
+        <span class="history-empty-icon">📋</span>
+        <p class="history-empty-title">No transfers yet</p>
+        <p class="history-empty-text">Your file transfer history will appear here</p>
+      </div>
+    </aside>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     // ================================================================
@@ -159,11 +191,24 @@
     let localCandidateTypes = new Set();
     let remoteCandidateTypes = new Set();
     let iceErrors = [];
+    let remoteCandidatesReceived = 0;
+
+    // Resume, history & pause/cancel state
+    const activeTransfers = new Map();
+    let currentTransferId = null;
+    let pendingSendFile = null;
+    let resolveFileStart = null;
+    let transferPaused = false;
+    let transferCancelled = false;
+    let resolvePause = null;
+    let isSending = false;
 
     const STUN_SERVERS = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:stun.services.mozilla.com:3478' },
+      { urls: 'stun:stun.stunprotocol.org:3478' }
     ];
 
     // ================================================================
@@ -210,6 +255,74 @@
       document.body.appendChild(el);
       setTimeout(() => el.remove(), 3200);
     }
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+    function timeAgo(ts) {
+      const d = Date.now() - ts;
+      if (d < 60000) return 'just now';
+      if (d < 3600000) return `${Math.floor(d / 60000)}m ago`;
+      if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
+      return `${Math.floor(d / 86400000)}d ago`;
+    }
+    function statusLabel(s) {
+      switch (s) {
+        case 'completed': return '✓ Done';
+        case 'failed': return '✕ Failed';
+        case 'interrupted': return '⏸ Incomplete';
+        case 'cancelled': return '✕ Cancelled';
+        case 'in-progress': return '⋯ Active';
+        default: return s;
+      }
+    }
+
+    // ================================================================
+    // Transfer History (localStorage)
+    // ================================================================
+    class TransferHistory {
+      constructor(max = 10, expireMs = 12 * 3600000) {
+        this.key = 'peerDropHistory';
+        this.max = max;
+        this.expireMs = expireMs;
+      }
+      getAll() {
+        try {
+          const data = JSON.parse(localStorage.getItem(this.key) || '[]');
+          return this._prune(data);
+        } catch { return []; }
+      }
+      add(entry) {
+        const list = this.getAll();
+        // Deduplicate: only one entry per transferId
+        const idx = list.findIndex(e => e.transferId === entry.transferId);
+        if (idx !== -1) {
+          list.splice(idx, 1);
+        }
+        list.unshift({ ...entry, timestamp: Date.now() });
+        if (list.length > this.max) list.length = this.max;
+        this._save(list);
+      }
+      update(transferId, updates) {
+        const list = this.getAll();
+        const item = list.find(e => e.transferId === transferId);
+        if (item) Object.assign(item, updates);
+        this._save(list);
+      }
+      clear() { localStorage.removeItem(this.key); }
+      _prune(list) {
+        const now = Date.now();
+        const out = list.filter(e =>
+          e.status === 'completed' || (now - e.timestamp) < this.expireMs
+        );
+        if (out.length !== list.length) this._save(out);
+        return out;
+      }
+      _save(list) { localStorage.setItem(this.key, JSON.stringify(list)); }
+    }
+    const transferHistory = new TransferHistory(10, 12 * 3600000);
 
     function getModeLabel() {
       return directOnlyToggle.checked ? 'HOST ONLY' : 'STUN';
@@ -411,7 +524,11 @@
 
       if (data.offer) {
         await pc.setRemoteDescription(data.offer);
-        for (const c of pendingCandidates) await pc.addIceCandidate(c);
+        for (const c of pendingCandidates) {
+          try { await pc.addIceCandidate(c); } catch (err) {
+            console.error('[ICE] pending addIceCandidate failed:', err.message);
+          }
+        }
         pendingCandidates = [];
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -420,16 +537,27 @@
 
       if (data.answer) {
         await pc.setRemoteDescription(data.answer);
-        for (const c of pendingCandidates) await pc.addIceCandidate(c);
+        for (const c of pendingCandidates) {
+          try { await pc.addIceCandidate(c); } catch (err) {
+            console.error('[ICE] pending addIceCandidate failed:', err.message);
+          }
+        }
         pendingCandidates = [];
       }
 
       if (data.ice) {
-        if (data.ice.type) remoteCandidateTypes.add(data.ice.type);
-        if (pc.remoteDescription) {
-          await pc.addIceCandidate(data.ice);
-        } else {
-          pendingCandidates.push(data.ice);
+        remoteCandidatesReceived++;
+        const candType = data.ice.candidate ? data.ice.candidate.match(/typ (\w+)/) : null;
+        if (candType) remoteCandidateTypes.add(candType[1]);
+        try {
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(data.ice);
+          } else {
+            pendingCandidates.push(data.ice);
+          }
+        } catch (err) {
+          console.error('[ICE] addIceCandidate failed:', err.message, data.ice);
+          iceErrors.push(`addICE: ${err.message}`);
         }
       }
     });
@@ -438,6 +566,7 @@
     // Peer left / disconnect
     // ================================================================
     socket.on('peer-left', () => {
+      saveIncompleteTransfer();
       cleanupConnection();
       showLobby();
       showToast('Peer disconnected', 'info');
@@ -447,9 +576,29 @@
       if (currentRoomId) {
         socket.emit('leave-room', currentRoomId);
       }
+      saveIncompleteTransfer();
       cleanupConnection();
       showLobby();
     });
+
+    function saveIncompleteTransfer() {
+      if (fileMeta && receivedBytes > 0 && receivedBytes < fileMeta.size && currentTransferId) {
+        activeTransfers.set(currentTransferId, {
+          chunks: [...receivedChunks],
+          bytesReceived: receivedBytes,
+          meta: { ...fileMeta }
+        });
+        transferHistory.update(currentTransferId, { status: 'interrupted' });
+        renderHistory();
+      }
+      if (currentTransferId && pendingSendFile) {
+        transferHistory.update(currentTransferId, { status: 'interrupted' });
+        renderHistory();
+      }
+      currentTransferId = null;
+      pendingSendFile = null;
+      resolveFileStart = null;
+    }
 
     function cleanupConnection() {
       if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
@@ -464,20 +613,14 @@
       localCandidateTypes = new Set();
       remoteCandidateTypes = new Set();
       iceErrors = [];
+      remoteCandidatesReceived = 0;
     }
 
     // ================================================================
     // RTCPeerConnection
     // ================================================================
     function createPeerConnection() {
-      if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
-      lastBytesSent = null;
-      lastBytesReceived = null;
-      lastStatsTs = null;
-      localCandidateTypes = new Set();
-      remoteCandidateTypes = new Set();
-      iceErrors = [];
-      selectedPathLogged = false;
+      remoteCandidatesReceived = 0;
       setRateInfo('waiting…');
       setDebugInfo('gathering ICE candidates…');
 
@@ -516,7 +659,16 @@
         } else if (state === 'failed') {
           $('connection-status').textContent = 'Failed';
           dumpFailureDiagnostics(conn);
-          showToast('Connection failed — check diagnostics', 'error');
+          // Auto-detect STUN blocked: if all errors are DNS failures (701) and not in host-only mode
+          const allDnsBlocked = iceErrors.length > 0 && iceErrors.every(e => e.includes('code=701'));
+          if (allDnsBlocked && !directOnlyToggle.checked) {
+            showToast('STUN servers blocked by this network. Switching to Host-only mode — please reconnect.', 'error');
+            directOnlyToggle.checked = true;
+            localStorage.setItem('forceDirectMode', '1');
+            setModeInfo();
+          } else {
+            showToast('Connection failed — check diagnostics', 'error');
+          }
         } else if (state === 'disconnected' || state === 'closed') {
           if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
           $('connection-status').textContent = state;
@@ -609,7 +761,7 @@
             remoteCandidateTypes.add(report.candidateType);
           }
         });
-        const summary = `FAILED | local=[${[...localCandidateTypes].join(',') || 'none'}] remote=[${[...remoteCandidateTypes].join(',') || 'none'}] pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ') || 'none'}]`;
+        const summary = `FAILED | local=[${[...localCandidateTypes].join(',') || 'none'}] remote=[${[...remoteCandidateTypes].join(',') || 'none'}] rcvd=${remoteCandidatesReceived} pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ') || 'none'}]`;
         setDebugInfo(summary);
       } catch (err) {
         setDebugInfo('diagnostics error: ' + err.message);
@@ -629,11 +781,73 @@
 
       channel.onmessage = ({ data }) => {
         if (typeof data === 'string') {
-          fileMeta = JSON.parse(data);
-          receivedChunks = [];
-          receivedBytes = 0;
-          $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
-          showProgressUI(true);
+          const msg = JSON.parse(data);
+
+          if (msg.type === 'file-meta') {
+            currentTransferId = msg.transferId;
+            fileMeta = { name: msg.name, size: msg.size };
+            transferCancelled = false;
+            isSending = false;
+            const existing = activeTransfers.get(msg.transferId);
+            if (existing && existing.bytesReceived > 0 && existing.bytesReceived < msg.size) {
+              receivedChunks = existing.chunks;
+              receivedBytes = existing.bytesReceived;
+              activeTransfers.delete(msg.transferId);
+              const pct = Math.round((receivedBytes / fileMeta.size) * 100);
+              $('progress-label').textContent = `Resuming: ${fileMeta.name} (${pct}%)`;
+              showProgressUI(true);
+              updateProgress(pct);
+              showToast(`Resuming from ${formatSize(receivedBytes)}`, 'info');
+              channel.send(JSON.stringify({ type: 'file-start', transferId: msg.transferId, offset: receivedBytes }));
+            } else {
+              receivedChunks = [];
+              receivedBytes = 0;
+              activeTransfers.delete(msg.transferId);
+              $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
+              showProgressUI(true);
+              channel.send(JSON.stringify({ type: 'file-start', transferId: msg.transferId, offset: 0 }));
+            }
+
+          } else if (msg.type === 'file-start') {
+            if (resolveFileStart) { resolveFileStart(msg.offset || 0); resolveFileStart = null; }
+
+          } else if (msg.type === 'transfer-pause') {
+            // Remote peer asked us to pause sending
+            if (isSending && !transferPaused) {
+              transferPaused = true;
+              $('progress-label').textContent = 'Paused: ' + (fileMeta?.name || '');
+              $('pause-btn').textContent = '▶ Resume';
+            }
+
+          } else if (msg.type === 'transfer-resume') {
+            // Remote peer asked us to resume sending
+            if (isSending && transferPaused) {
+              transferPaused = false;
+              $('progress-label').textContent = 'Sending: ' + (fileMeta?.name || '');
+              $('pause-btn').textContent = '⏸ Pause';
+              if (resolvePause) { resolvePause(); resolvePause = null; }
+            }
+
+          } else if (msg.type === 'transfer-cancel') {
+            // Remote peer cancelled the transfer
+            transferCancelled = true;
+            transferPaused = false;
+            if (resolvePause) { resolvePause(); resolvePause = null; }
+            showProgressUI(false);
+            showToast('Transfer cancelled by peer', 'info');
+            if (currentTransferId) {
+              transferHistory.add({
+                transferId: currentTransferId, fileName: fileMeta?.name || pendingSendFile?.name || 'File',
+                fileSize: fileMeta?.size || pendingSendFile?.size || 0, direction: isSending ? 'sent' : 'received',
+                peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+                status: 'cancelled'
+              });
+              renderHistory();
+            }
+            receivedChunks = []; receivedBytes = 0; fileMeta = null;
+            currentTransferId = null; pendingSendFile = null; isSending = false;
+
+          }
         } else {
           receivedChunks.push(data);
           receivedBytes += data.byteLength;
@@ -648,7 +862,17 @@
             a.click();
             showToast(`File received: ${fileMeta.name}`, 'success');
             showProgressUI(false);
-            $('progress-label').textContent = 'Done';
+            if (currentTransferId) {
+              transferHistory.add({
+                transferId: currentTransferId, fileName: fileMeta.name,
+                fileSize: fileMeta.size, direction: 'received',
+                peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+                status: 'completed'
+              });
+              renderHistory();
+            }
+            activeTransfers.delete(currentTransferId);
+            currentTransferId = null;
           }
         }
       };
@@ -678,7 +902,7 @@
       filePreview.style.display = 'flex';
     }
 
-    $('send-btn').addEventListener('click', () => {
+    $('send-btn').addEventListener('click', async () => {
       const file = fileInput.files[0];
       if (!file) { showToast('Select a file first', 'error'); return; }
       if (!dataChannel || dataChannel.readyState !== 'open') {
@@ -687,15 +911,50 @@
       }
 
       const CHUNK_SIZE = 16384;
-      dataChannel.send(JSON.stringify({ name: file.name, size: file.size }));
+      const transferId = `${file.name}-${file.size}-${file.lastModified}`;
+      currentTransferId = transferId;
+      pendingSendFile = file;
+      transferPaused = false;
+      transferCancelled = false;
+      isSending = true;
+      $('pause-btn').textContent = '⏸ Pause';
+
+      dataChannel.send(JSON.stringify({
+        type: 'file-meta', transferId, name: file.name, size: file.size
+      }));
+
       $('progress-label').textContent = 'Sending: ' + file.name;
       showProgressUI(true);
 
+      let resumeOffset = 0;
+      try {
+        resumeOffset = await Promise.race([
+          new Promise(resolve => { resolveFileStart = resolve; }),
+          new Promise((_, reject) => setTimeout(() => reject('timeout'), 10000))
+        ]);
+      } catch { resumeOffset = 0; }
+      resolveFileStart = null;
+
+      if (resumeOffset > 0) showToast(`Resuming from ${formatSize(resumeOffset)}`, 'info');
+
       dataChannel.bufferedAmountLowThreshold = 44 * 1024;
-      sendFileWithBackpressure(file, CHUNK_SIZE).catch((err) => {
-        showToast('Send failed: ' + err.message, 'error');
-        showProgressUI(false);
-      });
+      try {
+        await sendFileWithBackpressure(file, CHUNK_SIZE, resumeOffset);
+      } catch (err) {
+        if (transferCancelled) {
+          // Already handled by cancel flow
+        } else {
+          showToast('Send failed: ' + err.message, 'error');
+          showProgressUI(false);
+          transferHistory.add({
+            transferId, fileName: file.name, fileSize: file.size,
+            direction: 'sent', peerName: $('peer-name').textContent,
+            peerEmoji: $('peer-emoji').textContent, status: 'failed'
+          });
+          renderHistory();
+        }
+        isSending = false;
+      }
     });
 
     async function waitForBufferedAmountLow(channel, threshold) {
@@ -709,11 +968,16 @@
       });
     }
 
-    async function sendFileWithBackpressure(file, chunkSize) {
-      let offset = 0;
+    async function sendFileWithBackpressure(file, chunkSize, startOffset = 0) {
+      let offset = startOffset;
       const maxBuf = 350 * 1024;
 
       while (offset < file.size) {
+        if (transferCancelled) throw new Error('Transfer cancelled');
+        if (transferPaused) {
+          await new Promise(resolve => { resolvePause = resolve; });
+          if (transferCancelled) throw new Error('Transfer cancelled');
+        }
         if (dataChannel.readyState !== 'open') {
           throw new Error('Data channel closed during transfer');
         }
@@ -727,6 +991,18 @@
 
       showToast('File sent! ✅', 'success');
       showProgressUI(false);
+      if (currentTransferId) {
+        transferHistory.add({
+          transferId: currentTransferId, fileName: file.name,
+          fileSize: file.size, direction: 'sent',
+          peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+          status: 'completed'
+        });
+        renderHistory();
+        currentTransferId = null;
+        pendingSendFile = null;
+        isSending = false;
+      }
     }
 
     // ================================================================
@@ -734,12 +1010,121 @@
     // ================================================================
     function showProgressUI(show) {
       progressSection.style.display = show ? 'block' : 'none';
-      if (show) updateProgress(0);
+      if (show) {
+        updateProgress(0);
+        $('pause-btn').textContent = '⏸ Pause';
+        $('pause-btn').style.display = '';
+        $('cancel-btn').style.display = '';
+      }
     }
     function updateProgress(pct) {
       $('progress-bar').style.width = pct + '%';
       $('progress-pct').textContent = pct + '%';
     }
+
+    // Pause / Cancel handlers
+    $('pause-btn').addEventListener('click', () => {
+      if (!currentTransferId) return;
+      if (transferPaused) {
+        // Resume
+        transferPaused = false;
+        $('pause-btn').textContent = '⏸ Pause';
+        $('progress-label').textContent = (isSending ? 'Sending: ' : 'Receiving: ') + (fileMeta?.name || '');
+        if (isSending) {
+          if (resolvePause) { resolvePause(); resolvePause = null; }
+        } else {
+          dataChannel?.send(JSON.stringify({ type: 'transfer-resume', transferId: currentTransferId }));
+        }
+      } else {
+        // Pause
+        transferPaused = true;
+        $('pause-btn').textContent = '▶ Resume';
+        $('progress-label').textContent = 'Paused: ' + (fileMeta?.name || '');
+        if (isSending) {
+          // Sender pauses locally — loop will block
+        } else {
+          dataChannel?.send(JSON.stringify({ type: 'transfer-pause', transferId: currentTransferId }));
+        }
+      }
+    });
+
+    $('cancel-btn').addEventListener('click', () => {
+      if (!currentTransferId) return;
+      transferCancelled = true;
+      transferPaused = false;
+      if (resolvePause) { resolvePause(); resolvePause = null; }
+      dataChannel?.send(JSON.stringify({ type: 'transfer-cancel', transferId: currentTransferId }));
+      showProgressUI(false);
+      showToast('Transfer cancelled', 'info');
+      transferHistory.add({
+        transferId: currentTransferId, fileName: fileMeta?.name || pendingSendFile?.name || 'File',
+        fileSize: fileMeta?.size || pendingSendFile?.size || 0, direction: isSending ? 'sent' : 'received',
+        peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+        status: 'cancelled'
+      });
+      renderHistory();
+      receivedChunks = []; receivedBytes = 0; fileMeta = null;
+      currentTransferId = null; pendingSendFile = null; isSending = false;
+    });
+
+    // ================================================================
+    // History panel
+    // ================================================================
+    function toggleHistory() {
+      const overlay = $('history-overlay');
+      if (overlay.style.display === 'none') {
+        renderHistory();
+        overlay.style.display = 'block';
+      } else {
+        overlay.style.display = 'none';
+      }
+    }
+    function renderHistory() {
+      const allItems = transferHistory.getAll();
+      // Only show final-state entries (not in-progress)
+      const items = allItems.filter(e => e.status !== 'in-progress');
+      const list = $('history-list');
+      const empty = $('history-empty');
+      if (items.length === 0) {
+        list.innerHTML = '';
+        empty.classList.add('visible');
+        return;
+      }
+      empty.classList.remove('visible');
+      list.innerHTML = items.map((item, i) => {
+        const dirClass = item.direction === 'sent' ? 'history-sent' : 'history-received';
+        const dirLabel = item.direction === 'sent' ? '↑' : '↓';
+        return `
+        <div class="history-item" style="animation-delay:${i * 0.04}s">
+          <div class="history-item-direction ${dirClass}">${dirLabel}</div>
+          <div class="history-item-details">
+            <div class="history-item-top">
+              <span class="history-item-name">${escapeHtml(item.fileName)}</span>
+              <span class="history-status status-${item.status}">${statusLabel(item.status)}</span>
+            </div>
+            <div class="history-item-meta">
+              <span>${formatSize(item.fileSize)}</span>
+              <span class="sep">·</span>
+              <span>${item.peerEmoji || ''} ${escapeHtml(item.peerName || 'Unknown')}</span>
+              <span class="sep">·</span>
+              <span>${timeAgo(item.timestamp)}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // History event listeners
+    $('history-btn').addEventListener('click', toggleHistory);
+    $('close-history-btn').addEventListener('click', toggleHistory);
+    $('clear-history-btn').addEventListener('click', () => {
+      transferHistory.clear();
+      renderHistory();
+      showToast('History cleared', 'info');
+    });
+    $('history-overlay').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) toggleHistory();
+    });
   </script>
 </body>
 
