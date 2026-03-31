@@ -183,15 +183,10 @@
     let pc = null;
     let dataChannel = null;
     let pendingCandidates = [];
-    let selectedPathLogged = false;
     let statsInterval = null;
     let lastBytesSent = null;
     let lastBytesReceived = null;
     let lastStatsTs = null;
-    let localCandidateTypes = new Set();
-    let remoteCandidateTypes = new Set();
-    let iceErrors = [];
-    let remoteCandidatesReceived = 0;
 
     // Resume, history & pause/cancel state
     const activeTransfers = new Map();
@@ -546,9 +541,6 @@
       }
 
       if (data.ice) {
-        remoteCandidatesReceived++;
-        const candType = data.ice.candidate ? data.ice.candidate.match(/typ (\w+)/) : null;
-        if (candType) remoteCandidateTypes.add(candType[1]);
         try {
           if (pc.remoteDescription) {
             await pc.addIceCandidate(data.ice);
@@ -556,8 +548,7 @@
             pendingCandidates.push(data.ice);
           }
         } catch (err) {
-          console.error('[ICE] addIceCandidate failed:', err.message, data.ice);
-          iceErrors.push(`addICE: ${err.message}`);
+          console.error('[ICE] addIceCandidate failed:', err.message);
         }
       }
     });
@@ -606,47 +597,28 @@
       if (pc) { try { pc.close(); } catch (_) { } pc = null; }
       currentRoomId = null;
       pendingCandidates = [];
-      selectedPathLogged = false;
       lastBytesSent = null;
       lastBytesReceived = null;
       lastStatsTs = null;
-      localCandidateTypes = new Set();
-      remoteCandidateTypes = new Set();
-      iceErrors = [];
-      remoteCandidatesReceived = 0;
     }
 
     // ================================================================
     // RTCPeerConnection
     // ================================================================
     function createPeerConnection() {
-      remoteCandidatesReceived = 0;
       setRateInfo('waiting…');
-      setDebugInfo('gathering ICE candidates…');
+      setDebugInfo('—');
 
       const conn = new RTCPeerConnection({
         iceServers: getIceServers(),
         iceTransportPolicy: 'all'
       });
 
-      setPathInfo(directOnlyToggle.checked ? 'Host-only ICE | gathering…' : 'STUN | gathering…');
+      setPathInfo(directOnlyToggle.checked ? 'Host-only ICE' : 'STUN');
 
       conn.onicecandidate = (e) => {
         if (e.candidate) {
-          if (e.candidate.type) localCandidateTypes.add(e.candidate.type);
           socket.emit('signal', currentRoomId, { ice: e.candidate });
-        }
-      };
-
-      conn.onicecandidateerror = (e) => {
-        const err = `url=${e.url || 'n/a'} code=${e.errorCode || 'n/a'} text=${e.errorText || 'n/a'}`;
-        iceErrors.push(err);
-      };
-
-      conn.oniceconnectionstatechange = () => {
-        if ((conn.iceConnectionState === 'connected' || conn.iceConnectionState === 'completed') && !selectedPathLogged) {
-          selectedPathLogged = true;
-          logSelectedCandidatePair(conn);
         }
       };
 
@@ -658,17 +630,8 @@
           startThroughputMonitor(conn);
         } else if (state === 'failed') {
           $('connection-status').textContent = 'Failed';
-          dumpFailureDiagnostics(conn);
-          // Auto-detect STUN blocked: if all errors are DNS failures (701) and not in host-only mode
-          const allDnsBlocked = iceErrors.length > 0 && iceErrors.every(e => e.includes('code=701'));
-          if (allDnsBlocked && !directOnlyToggle.checked) {
-            showToast('STUN servers blocked by this network. Switching to Host-only mode — please reconnect.', 'error');
-            directOnlyToggle.checked = true;
-            localStorage.setItem('forceDirectMode', '1');
-            setModeInfo();
-          } else {
-            showToast('Connection failed — check diagnostics', 'error');
-          }
+          showToast('Connection failed — are both devices on the same network?', 'error');
+          setDebugInfo('connection failed');
         } else if (state === 'disconnected' || state === 'closed') {
           if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
           $('connection-status').textContent = state;
@@ -679,42 +642,6 @@
       };
 
       return conn;
-    }
-
-    // ================================================================
-    // ICE diagnostics (same logic as before)
-    // ================================================================
-    async function logSelectedCandidatePair(conn) {
-      try {
-        const stats = await conn.getStats();
-        let selectedPair = null;
-        stats.forEach(report => {
-          if (report.type === 'transport' && report.selectedCandidatePairId && !selectedPair) {
-            selectedPair = stats.get(report.selectedCandidatePairId);
-          }
-        });
-        if (!selectedPair) {
-          stats.forEach(report => {
-            if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded' && !selectedPair) {
-              selectedPair = report;
-            }
-          });
-        }
-        if (!selectedPair) { setPathInfo('selected pair not found'); return; }
-
-        const local = stats.get(selectedPair.localCandidateId);
-        const remote = stats.get(selectedPair.remoteCandidateId);
-        if (!local || !remote) { setPathInfo('pair found, candidate info missing'); return; }
-
-        const lt = local.candidateType || 'unknown';
-        const rt = remote.candidateType || 'unknown';
-        localCandidateTypes.add(lt);
-        remoteCandidateTypes.add(rt);
-        const hint = (lt === 'relay' || rt === 'relay') ? 'Relay' : 'Direct';
-        setPathInfo(`${hint} | local=${lt}/${local.protocol || 'n/a'} remote=${rt}/${remote.protocol || 'n/a'}`);
-      } catch (err) {
-        setPathInfo('stats read failed: ' + err.message);
-      }
     }
 
     function startThroughputMonitor(conn) {
@@ -745,27 +672,6 @@
           setRateInfo('stats error');
         }
       }, 1000);
-    }
-
-    async function dumpFailureDiagnostics(conn) {
-      try {
-        const stats = await conn.getStats();
-        let nominated = 0, succeeded = 0, inProgress = 0;
-        stats.forEach(report => {
-          if (report.type === 'candidate-pair') {
-            if (report.nominated) nominated++;
-            if (report.state === 'succeeded') succeeded++;
-            if (report.state === 'in-progress') inProgress++;
-          }
-          if (report.type === 'remote-candidate' && report.candidateType) {
-            remoteCandidateTypes.add(report.candidateType);
-          }
-        });
-        const summary = `FAILED | local=[${[...localCandidateTypes].join(',') || 'none'}] remote=[${[...remoteCandidateTypes].join(',') || 'none'}] rcvd=${remoteCandidatesReceived} pairs{ok=${succeeded},prog=${inProgress},nom=${nominated}} errors=[${iceErrors.join(' | ') || 'none'}]`;
-        setDebugInfo(summary);
-      } catch (err) {
-        setDebugInfo('diagnostics error: ' + err.message);
-      }
     }
 
     // ================================================================
