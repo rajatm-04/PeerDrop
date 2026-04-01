@@ -509,47 +509,53 @@
     // WebRTC signaling
     // ================================================================
     socket.on('signal', async (data) => {
-      if (!pc) {
-        pc = createPeerConnection();
-        pc.ondatachannel = (e) => {
-          dataChannel = e.channel;
-          setupDataChannel(dataChannel);
-        };
-      }
-
-      if (data.offer) {
-        await pc.setRemoteDescription(data.offer);
-        for (const c of pendingCandidates) {
-          try { await pc.addIceCandidate(c); } catch (err) {
-            console.error('[ICE] pending addIceCandidate failed:', err.message);
-          }
+      try {
+        if (!pc) {
+          pc = createPeerConnection();
+          // If we are B (receiver), we won't have the data channel yet
+          pc.ondatachannel = (e) => {
+            dataChannel = e.channel;
+            setupDataChannel(dataChannel);
+          };
         }
-        pendingCandidates = [];
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('signal', currentRoomId, { answer });
-      }
 
-      if (data.answer) {
-        await pc.setRemoteDescription(data.answer);
-        for (const c of pendingCandidates) {
-          try { await pc.addIceCandidate(c); } catch (err) {
-            console.error('[ICE] pending addIceCandidate failed:', err.message);
+        if (data.offer) {
+          console.log('[SIGNAL] Received offer');
+          await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+          
+          // Process any candidates that arrived before the offer
+          for (const c of pendingCandidates) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { }
           }
-        }
-        pendingCandidates = [];
-      }
+          pendingCandidates = [];
 
-      if (data.ice) {
-        try {
-          if (pc.remoteDescription) {
-            await pc.addIceCandidate(data.ice);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('signal', currentRoomId, { answer });
+        }
+
+        if (data.answer) {
+          console.log('[SIGNAL] Received answer');
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          
+          // Process any candidates that arrived before the answer
+          for (const c of pendingCandidates) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { }
+          }
+          pendingCandidates = [];
+        }
+
+        if (data.ice) {
+          const candidate = new RTCIceCandidate(data.ice);
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(candidate);
           } else {
             pendingCandidates.push(data.ice);
           }
-        } catch (err) {
-          console.error('[ICE] addIceCandidate failed:', err.message);
         }
+      } catch (err) {
+        console.error('[SIGNAL] Error handling signal:', err);
+        setDebugInfo('Signal Error');
       }
     });
 
@@ -606,32 +612,46 @@
     // RTCPeerConnection
     // ================================================================
     function createPeerConnection() {
+      if (pc) return pc; // Avoid re-creating if already exists
+
       setRateInfo('waiting…');
-      setDebugInfo('—');
+      setDebugInfo('init…');
 
-      const conn = new RTCPeerConnection({
+      const config = {
         iceServers: getIceServers(),
-        iceTransportPolicy: 'all'
-      });
+        iceTransportPolicy: 'all',
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
+      };
 
-      setPathInfo(directOnlyToggle.checked ? 'Host-only ICE' : 'STUN');
+      const conn = new RTCPeerConnection(config);
+      setPathInfo(directOnlyToggle.checked ? 'Host-only ICE' : 'STUN (gathering)');
 
       conn.onicecandidate = (e) => {
-        if (e.candidate) {
+        if (e.candidate && currentRoomId) {
           socket.emit('signal', currentRoomId, { ice: e.candidate });
+        }
+      };
+
+      conn.oniceconnectionstatechange = () => {
+        setDebugInfo(`ICE: ${conn.iceConnectionState}`);
+        if (conn.iceConnectionState === 'connected') {
+          setPathInfo(directOnlyToggle.checked ? 'Host-only' : 'STUN/Relay');
         }
       };
 
       conn.onconnectionstatechange = () => {
         const state = conn.connectionState;
+        setDebugInfo(`Conn: ${state}`);
+        
         if (state === 'connected') {
           $('connection-status').textContent = 'Connected';
           showToast('P2P connection established! 🎉', 'success');
           startThroughputMonitor(conn);
         } else if (state === 'failed') {
           $('connection-status').textContent = 'Failed';
-          showToast('Connection failed — are both devices on the same network?', 'error');
-          setDebugInfo('connection failed');
+          showToast('Connection failed — check firewall or try Host-only mode', 'error');
         } else if (state === 'disconnected' || state === 'closed') {
           if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
           $('connection-status').textContent = state;
@@ -661,15 +681,15 @@
           if (timestamp === null) return;
           if (lastStatsTs !== null && timestamp > lastStatsTs) {
             const dt = (timestamp - lastStatsTs) / 1000;
-            setRateInfo(`↑ ${formatRate((bytesSent - lastBytesSent) / dt)}  ↓ ${formatRate((bytesReceived - lastBytesReceived) / dt)}`);
-          } else {
-            setRateInfo('measuring…');
+            const tx = (bytesSent - lastBytesSent) / dt;
+            const rx = (bytesReceived - lastBytesReceived) / dt;
+            setRateInfo(`↑ ${formatRate(tx)}  ↓ ${formatRate(rx)}`);
           }
           lastBytesSent = bytesSent;
           lastBytesReceived = bytesReceived;
           lastStatsTs = timestamp;
         } catch (err) {
-          setRateInfo('stats error');
+          // ignore stats errors
         }
       }, 1000);
     }
