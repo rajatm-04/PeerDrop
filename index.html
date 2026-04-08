@@ -386,6 +386,13 @@
       $('my-name').textContent = info.displayName;
     });
 
+    // Server tells us our real local IP (for mDNS replacement)
+    let myLocalIp = null;
+    socket.on('your-ip', (ip) => {
+      myLocalIp = ip;
+      console.log('[NET] My local IP:', ip);
+    });
+
     socket.on('online-users', (users) => {
       const others = users.filter(u => u.id !== myInfo.id);
       renderDevices(others);
@@ -656,13 +663,30 @@
 
       conn.onicecandidate = (e) => {
         if (e.candidate && currentRoomId) {
-          // Log the candidate for diagnostics
           const c = e.candidate;
-          const addr = c.address || (c.candidate.match(/([\d.]+|[\w-]+\.local)\s+\d+\s+typ/) || [])[1] || '?';
-          const typ = c.type || (c.candidate.match(/typ (\w+)/) || [])[1] || '?';
-          localCandidateList.push(`${typ}:${addr}`);
-          $('local-candidates-info').textContent = localCandidateList.join(' | ');
-          socket.emit('signal', currentRoomId, { ice: e.candidate });
+          let candidateStr = c.candidate;
+          let addr = c.address || (candidateStr.match(/([\d.]+|[\w-]+\.local)\s+\d+\s+typ/) || [])[1] || '?';
+          const typ = c.type || (candidateStr.match(/typ (\w+)/) || [])[1] || '?';
+
+          // Replace mDNS .local hostname with real IP from server
+          if (myLocalIp && candidateStr.includes('.local')) {
+            const mdnsPattern = /[\w-]+\.local/g;
+            candidateStr = candidateStr.replace(mdnsPattern, myLocalIp);
+            const fixedCandidate = {
+              candidate: candidateStr,
+              sdpMid: c.sdpMid,
+              sdpMLineIndex: c.sdpMLineIndex,
+              usernameFragment: c.usernameFragment
+            };
+            addr = myLocalIp;
+            localCandidateList.push(`${typ}:${addr}`);
+            $('local-candidates-info').textContent = localCandidateList.join(' | ');
+            socket.emit('signal', currentRoomId, { ice: fixedCandidate });
+          } else {
+            localCandidateList.push(`${typ}:${addr}`);
+            $('local-candidates-info').textContent = localCandidateList.join(' | ');
+            socket.emit('signal', currentRoomId, { ice: e.candidate });
+          }
         }
       };
 

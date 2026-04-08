@@ -73,6 +73,26 @@ io.on('connection', (socket) => {
   // Tell the user who they are
   socket.emit('registered', { id: socket.id, displayName, emoji });
 
+  // Send the client its real local IP (used to replace mDNS .local candidates)
+  let clientIp = socket.handshake.address || '';
+  // Strip IPv6-mapped prefix (::ffff:192.168.1.5 → 192.168.1.5)
+  if (clientIp.startsWith('::ffff:')) clientIp = clientIp.slice(7);
+  // For loopback, try to find the real LAN IP
+  if (clientIp === '127.0.0.1' || clientIp === '::1') {
+    const os = require('node:os');
+    const nets = os.networkInterfaces();
+    for (const iface of Object.values(nets)) {
+      for (const cfg of iface) {
+        if (cfg.family === 'IPv4' && !cfg.internal) {
+          clientIp = cfg.address;
+          break;
+        }
+      }
+      if (clientIp !== '127.0.0.1' && clientIp !== '::1') break;
+    }
+  }
+  socket.emit('your-ip', clientIp);
+
   // Broadcast updated user list to everyone
   broadcastOnlineUsers();
 
