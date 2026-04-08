@@ -107,7 +107,7 @@
         </div>
       </div>
 
-      <details class="diagnostics glass">
+      <details class="diagnostics glass" open>
         <summary>Connection Diagnostics</summary>
         <div class="diag-grid">
           <div class="diag-item">
@@ -121,6 +121,18 @@
           <div class="diag-item">
             <span class="diag-label">Debug</span>
             <span class="diag-value" id="debug-info">—</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Local ICE</span>
+            <span class="diag-value" id="local-candidates-info">—</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Remote ICE</span>
+            <span class="diag-value" id="remote-candidates-info">—</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Pairs</span>
+            <span class="diag-value" id="pairs-info">—</span>
           </div>
         </div>
       </details>
@@ -187,6 +199,8 @@
     let lastBytesSent = null;
     let lastBytesReceived = null;
     let lastStatsTs = null;
+    let localCandidateList = [];
+    let remoteCandidateList = [];
 
     // Resume, history & pause/cancel state
     const activeTransfers = new Map();
@@ -547,10 +561,20 @@
 
         if (data.ice) {
           const candidate = new RTCIceCandidate(data.ice);
-          if (pc.remoteDescription && pc.remoteDescription.type) {
-            await pc.addIceCandidate(candidate);
-          } else {
-            pendingCandidates.push(data.ice);
+          // Log remote candidate for diagnostics
+          const candStr = data.ice.candidate || '';
+          const addr = (candStr.match(/([\d.]+|[\w-]+\.local)\s+\d+\s+typ/) || [])[1] || '?';
+          const typ = (candStr.match(/typ (\w+)/) || [])[1] || '?';
+          remoteCandidateList.push(`${typ}:${addr}`);
+          $('remote-candidates-info').textContent = remoteCandidateList.join(' | ');
+          try {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(candidate);
+            } else {
+              pendingCandidates.push(data.ice);
+            }
+          } catch (err) {
+            console.error('[ICE] addIceCandidate failed:', err.message);
           }
         }
       } catch (err) {
@@ -606,6 +630,8 @@
       lastBytesSent = null;
       lastBytesReceived = null;
       lastStatsTs = null;
+      localCandidateList = [];
+      remoteCandidateList = [];
     }
 
     // ================================================================
@@ -630,6 +656,12 @@
 
       conn.onicecandidate = (e) => {
         if (e.candidate && currentRoomId) {
+          // Log the candidate for diagnostics
+          const c = e.candidate;
+          const addr = c.address || (c.candidate.match(/([\d.]+|[\w-]+\.local)\s+\d+\s+typ/) || [])[1] || '?';
+          const typ = c.type || (c.candidate.match(/typ (\w+)/) || [])[1] || '?';
+          localCandidateList.push(`${typ}:${addr}`);
+          $('local-candidates-info').textContent = localCandidateList.join(' | ');
           socket.emit('signal', currentRoomId, { ice: e.candidate });
         }
       };
@@ -651,7 +683,8 @@
           startThroughputMonitor(conn);
         } else if (state === 'failed') {
           $('connection-status').textContent = 'Failed';
-          showToast('Connection failed — check firewall or try Host-only mode', 'error');
+          dumpFailureDiagnostics(conn);
+          showToast('Connection failed — check diagnostics below', 'error');
         } else if (state === 'disconnected' || state === 'closed') {
           if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
           $('connection-status').textContent = state;
@@ -692,6 +725,42 @@
           // ignore stats errors
         }
       }, 1000);
+    }
+
+    async function dumpFailureDiagnostics(conn) {
+      try {
+        const stats = await conn.getStats();
+        const pairs = [];
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair') {
+            const local = stats.get(report.localCandidateId);
+            const remote = stats.get(report.remoteCandidateId);
+            const lAddr = local ? `${local.candidateType}:${local.address || '?'}` : '?';
+            const rAddr = remote ? `${remote.candidateType}:${remote.address || '?'}` : '?';
+            pairs.push(`${lAddr}<>${rAddr} [${report.state}]`);
+          }
+        });
+        $('pairs-info').textContent = pairs.length ? pairs.join(' | ') : 'no pairs formed';
+
+        // Detect likely cause
+        const hasLocalMdns = localCandidateList.some(c => c.includes('.local'));
+        const hasRemoteMdns = remoteCandidateList.some(c => c.includes('.local'));
+        const allFailed = pairs.length > 0 && pairs.every(p => p.includes('[failed]'));
+
+        let hint = '';
+        if (hasLocalMdns || hasRemoteMdns) {
+          hint = 'mDNS (.local) candidates detected — Chrome privacy obfuscation may block connections. ';
+        }
+        if (allFailed && !hasLocalMdns && !hasRemoteMdns) {
+          hint += 'All pairs failed with real IPs — likely firewall (Windows Firewall blocks incoming UDP). ';
+        }
+        if (pairs.length === 0) {
+          hint = 'No pairs formed — candidates may not have been exchanged. ';
+        }
+        if (hint) setDebugInfo(hint);
+      } catch (err) {
+        setDebugInfo('diagnostics error: ' + err.message);
+      }
     }
 
     // ================================================================
