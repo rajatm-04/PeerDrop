@@ -8,6 +8,7 @@ const app = express();
 const server = createServer(app);
 const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
 const io = new Server(server, {
+  maxHttpBufferSize: 5e6,
   cors: {
     origin: allowedOrigin === '*' ? '*' : allowedOrigin.split(',').map((s) => s.trim()),
     methods: ['GET', 'POST']
@@ -157,6 +158,12 @@ io.on('connection', (socket) => {
     const room = io.sockets.adapter.rooms.get(roomId);
     console.log(`[SIGNAL] from=${socket.id} room=${roomId} roomSize=${room?.size || 0} type=${type}`);
     socket.to(roomId).emit('signal', data);
+  });
+
+  // ── Socket.io relay fallback (when WebRTC P2P fails) ────────────
+  socket.on('relay', (roomId, data, ack) => {
+    socket.to(roomId).emit('relay', data);
+    if (typeof ack === 'function') ack();
   });
 
   // ── Leave room / go back to lobby ───────────────────────────────

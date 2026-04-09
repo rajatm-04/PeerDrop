@@ -211,6 +211,7 @@
     let transferCancelled = false;
     let resolvePause = null;
     let isSending = false;
+    let useRelay = false;
 
     const STUN_SERVERS = [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -389,8 +390,40 @@
     // Server tells us our real local IP (for mDNS replacement)
     let myLocalIp = null;
     socket.on('your-ip', (ip) => {
-      myLocalIp = ip;
-      console.log('[NET] My local IP:', ip);
+      // Only use if it's a real private network IP (not CGNAT/public)
+      const isPrivate = ip && (
+        ip.startsWith('192.168.') ||
+        ip.startsWith('10.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
+      );
+      myLocalIp = isPrivate ? ip : null;
+      console.log('[NET] Server IP:', ip, isPrivate ? '(private — will replace mDNS)' : '(non-local — keeping mDNS)');
+    });
+
+    // ================================================================
+    // Transport helpers (WebRTC or Socket.io relay)
+    // ================================================================
+    function sendControl(msg) {
+      if (useRelay && currentRoomId) {
+        socket.emit('relay', currentRoomId, msg);
+      } else if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify(msg));
+      }
+    }
+
+    async function sendBinary(buf) {
+      if (useRelay && currentRoomId) {
+        await new Promise(resolve => {
+          socket.emit('relay', currentRoomId, buf, resolve);
+        });
+      } else if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(buf);
+      }
+    }
+
+    // Relay receiver (mirrors dataChannel.onmessage logic)
+    socket.on('relay', (data) => {
+      handleIncomingData(data);
     });
 
     socket.on('online-users', (users) => {
@@ -639,6 +672,7 @@
       lastStatsTs = null;
       localCandidateList = [];
       remoteCandidateList = [];
+      useRelay = false;
     }
 
     // ================================================================
@@ -706,9 +740,12 @@
           showToast('P2P connection established! 🎉', 'success');
           startThroughputMonitor(conn);
         } else if (state === 'failed') {
-          $('connection-status').textContent = 'Failed';
           dumpFailureDiagnostics(conn);
-          showToast('Connection failed — check diagnostics below', 'error');
+          // Auto-fallback to Socket.io relay
+          useRelay = true;
+          $('connection-status').textContent = 'Connected (relay)';
+          setPathInfo('Server relay');
+          showToast('Direct P2P failed — using server relay', 'info');
         } else if (state === 'disconnected' || state === 'closed') {
           if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
           $('connection-status').textContent = state;
@@ -798,103 +835,108 @@
       channel.binaryType = 'arraybuffer';
       channel.onopen = () => console.log('Data channel open');
 
-      channel.onmessage = ({ data }) => {
-        if (typeof data === 'string') {
-          const msg = JSON.parse(data);
+      channel.onmessage = ({ data }) => handleIncomingData(data);
+    }
 
-          if (msg.type === 'file-meta') {
-            currentTransferId = msg.transferId;
-            fileMeta = { name: msg.name, size: msg.size };
-            transferCancelled = false;
-            isSending = false;
-            const existing = activeTransfers.get(msg.transferId);
-            if (existing && existing.bytesReceived > 0 && existing.bytesReceived < msg.size) {
-              receivedChunks = existing.chunks;
-              receivedBytes = existing.bytesReceived;
-              activeTransfers.delete(msg.transferId);
-              const pct = Math.round((receivedBytes / fileMeta.size) * 100);
-              $('progress-label').textContent = `Resuming: ${fileMeta.name} (${pct}%)`;
-              showProgressUI(true);
-              updateProgress(pct);
-              showToast(`Resuming from ${formatSize(receivedBytes)}`, 'info');
-              channel.send(JSON.stringify({ type: 'file-start', transferId: msg.transferId, offset: receivedBytes }));
-            } else {
-              receivedChunks = [];
-              receivedBytes = 0;
-              activeTransfers.delete(msg.transferId);
-              $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
-              showProgressUI(true);
-              channel.send(JSON.stringify({ type: 'file-start', transferId: msg.transferId, offset: 0 }));
-            }
+    // Shared message handler for both WebRTC dataChannel and Socket.io relay
+    function handleIncomingData(data) {
+      // Determine if it's a control message or binary
+      const isBinary = data instanceof ArrayBuffer || (data instanceof Blob) ||
+                       (typeof Buffer !== 'undefined' && Buffer.isBuffer(data));
+      const isControlObj = !isBinary && typeof data === 'object' && data !== null && data.type;
 
-          } else if (msg.type === 'file-start') {
-            if (resolveFileStart) { resolveFileStart(msg.offset || 0); resolveFileStart = null; }
+      if (typeof data === 'string' || isControlObj) {
+        const msg = typeof data === 'string' ? JSON.parse(data) : data;
 
-          } else if (msg.type === 'transfer-pause') {
-            // Remote peer asked us to pause sending
-            if (isSending && !transferPaused) {
-              transferPaused = true;
-              $('progress-label').textContent = 'Paused: ' + (fileMeta?.name || '');
-              $('pause-btn').textContent = '▶ Resume';
-            }
+        if (msg.type === 'file-meta') {
+          currentTransferId = msg.transferId;
+          fileMeta = { name: msg.name, size: msg.size };
+          transferCancelled = false;
+          isSending = false;
+          const existing = activeTransfers.get(msg.transferId);
+          if (existing && existing.bytesReceived > 0 && existing.bytesReceived < msg.size) {
+            receivedChunks = existing.chunks;
+            receivedBytes = existing.bytesReceived;
+            activeTransfers.delete(msg.transferId);
+            const pct = Math.round((receivedBytes / fileMeta.size) * 100);
+            $('progress-label').textContent = `Resuming: ${fileMeta.name} (${pct}%)`;
+            showProgressUI(true);
+            updateProgress(pct);
+            showToast(`Resuming from ${formatSize(receivedBytes)}`, 'info');
+            sendControl({ type: 'file-start', transferId: msg.transferId, offset: receivedBytes });
+          } else {
+            receivedChunks = [];
+            receivedBytes = 0;
+            activeTransfers.delete(msg.transferId);
+            $('progress-label').textContent = 'Receiving: ' + fileMeta.name;
+            showProgressUI(true);
+            sendControl({ type: 'file-start', transferId: msg.transferId, offset: 0 });
+          }
 
-          } else if (msg.type === 'transfer-resume') {
-            // Remote peer asked us to resume sending
-            if (isSending && transferPaused) {
-              transferPaused = false;
-              $('progress-label').textContent = 'Sending: ' + (fileMeta?.name || '');
-              $('pause-btn').textContent = '⏸ Pause';
-              if (resolvePause) { resolvePause(); resolvePause = null; }
-            }
+        } else if (msg.type === 'file-start') {
+          if (resolveFileStart) { resolveFileStart(msg.offset || 0); resolveFileStart = null; }
 
-          } else if (msg.type === 'transfer-cancel') {
-            // Remote peer cancelled the transfer
-            transferCancelled = true;
+        } else if (msg.type === 'transfer-pause') {
+          if (isSending && !transferPaused) {
+            transferPaused = true;
+            $('progress-label').textContent = 'Paused: ' + (fileMeta?.name || '');
+            $('pause-btn').textContent = '▶ Resume';
+          }
+
+        } else if (msg.type === 'transfer-resume') {
+          if (isSending && transferPaused) {
             transferPaused = false;
+            $('progress-label').textContent = 'Sending: ' + (fileMeta?.name || '');
+            $('pause-btn').textContent = '⏸ Pause';
             if (resolvePause) { resolvePause(); resolvePause = null; }
-            showProgressUI(false);
-            showToast('Transfer cancelled by peer', 'info');
-            if (currentTransferId) {
-              transferHistory.add({
-                transferId: currentTransferId, fileName: fileMeta?.name || pendingSendFile?.name || 'File',
-                fileSize: fileMeta?.size || pendingSendFile?.size || 0, direction: isSending ? 'sent' : 'received',
-                peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
-                status: 'cancelled'
-              });
-              renderHistory();
-            }
-            receivedChunks = []; receivedBytes = 0; fileMeta = null;
-            currentTransferId = null; pendingSendFile = null; isSending = false;
-
           }
-        } else {
-          receivedChunks.push(data);
-          receivedBytes += data.byteLength;
-          const pct = Math.round((receivedBytes / fileMeta.size) * 100);
-          updateProgress(pct);
 
-          if (receivedBytes >= fileMeta.size) {
-            const blob = new Blob(receivedChunks);
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = fileMeta.name;
-            a.click();
-            showToast(`File received: ${fileMeta.name}`, 'success');
-            showProgressUI(false);
-            if (currentTransferId) {
-              transferHistory.add({
-                transferId: currentTransferId, fileName: fileMeta.name,
-                fileSize: fileMeta.size, direction: 'received',
-                peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
-                status: 'completed'
-              });
-              renderHistory();
-            }
-            activeTransfers.delete(currentTransferId);
-            currentTransferId = null;
+        } else if (msg.type === 'transfer-cancel') {
+          transferCancelled = true;
+          transferPaused = false;
+          if (resolvePause) { resolvePause(); resolvePause = null; }
+          showProgressUI(false);
+          showToast('Transfer cancelled by peer', 'info');
+          if (currentTransferId) {
+            transferHistory.add({
+              transferId: currentTransferId, fileName: fileMeta?.name || pendingSendFile?.name || 'File',
+              fileSize: fileMeta?.size || pendingSendFile?.size || 0, direction: isSending ? 'sent' : 'received',
+              peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+              status: 'cancelled'
+            });
+            renderHistory();
           }
+          receivedChunks = []; receivedBytes = 0; fileMeta = null;
+          currentTransferId = null; pendingSendFile = null; isSending = false;
         }
-      };
+      } else {
+        // Binary chunk
+        receivedChunks.push(data);
+        receivedBytes += data.byteLength;
+        const pct = Math.round((receivedBytes / fileMeta.size) * 100);
+        updateProgress(pct);
+
+        if (receivedBytes >= fileMeta.size) {
+          const blob = new Blob(receivedChunks);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = fileMeta.name;
+          a.click();
+          showToast(`File received: ${fileMeta.name}`, 'success');
+          showProgressUI(false);
+          if (currentTransferId) {
+            transferHistory.add({
+              transferId: currentTransferId, fileName: fileMeta.name,
+              fileSize: fileMeta.size, direction: 'received',
+              peerName: $('peer-name').textContent, peerEmoji: $('peer-emoji').textContent,
+              status: 'completed'
+            });
+            renderHistory();
+          }
+          activeTransfers.delete(currentTransferId);
+          currentTransferId = null;
+        }
+      }
     }
 
     // ================================================================
@@ -924,7 +966,8 @@
     $('send-btn').addEventListener('click', async () => {
       const file = fileInput.files[0];
       if (!file) { showToast('Select a file first', 'error'); return; }
-      if (!dataChannel || dataChannel.readyState !== 'open') {
+      const dcReady = dataChannel && dataChannel.readyState === 'open';
+      if (!useRelay && !dcReady) {
         showToast('Connection not ready yet', 'error');
         return;
       }
@@ -938,9 +981,9 @@
       isSending = true;
       $('pause-btn').textContent = '⏸ Pause';
 
-      dataChannel.send(JSON.stringify({
+      sendControl({
         type: 'file-meta', transferId, name: file.name, size: file.size
-      }));
+      });
 
       $('progress-label').textContent = 'Sending: ' + file.name;
       showProgressUI(true);
@@ -997,13 +1040,13 @@
           await new Promise(resolve => { resolvePause = resolve; });
           if (transferCancelled) throw new Error('Transfer cancelled');
         }
-        if (dataChannel.readyState !== 'open') {
+        if (!useRelay && (!dataChannel || dataChannel.readyState !== 'open')) {
           throw new Error('Data channel closed during transfer');
         }
-        await waitForBufferedAmountLow(dataChannel, maxBuf);
+        if (!useRelay) await waitForBufferedAmountLow(dataChannel, maxBuf);
         const chunk = file.slice(offset, offset + chunkSize);
         const buf = await chunk.arrayBuffer();
-        dataChannel.send(buf);
+        await sendBinary(buf);
         offset += buf.byteLength;
         updateProgress(Math.min(Math.round((offset / file.size) * 100), 100));
       }
@@ -1052,7 +1095,7 @@
         if (isSending) {
           if (resolvePause) { resolvePause(); resolvePause = null; }
         } else {
-          dataChannel?.send(JSON.stringify({ type: 'transfer-resume', transferId: currentTransferId }));
+          sendControl({ type: 'transfer-resume', transferId: currentTransferId });
         }
       } else {
         // Pause
@@ -1062,7 +1105,7 @@
         if (isSending) {
           // Sender pauses locally — loop will block
         } else {
-          dataChannel?.send(JSON.stringify({ type: 'transfer-pause', transferId: currentTransferId }));
+          sendControl({ type: 'transfer-pause', transferId: currentTransferId });
         }
       }
     });
@@ -1072,7 +1115,7 @@
       transferCancelled = true;
       transferPaused = false;
       if (resolvePause) { resolvePause(); resolvePause = null; }
-      dataChannel?.send(JSON.stringify({ type: 'transfer-cancel', transferId: currentTransferId }));
+      sendControl({ type: 'transfer-cancel', transferId: currentTransferId });
       showProgressUI(false);
       showToast('Transfer cancelled', 'info');
       transferHistory.add({
